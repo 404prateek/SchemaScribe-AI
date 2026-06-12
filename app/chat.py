@@ -1,5 +1,6 @@
 # chat.py - Conversational Analytics using Llama-3.1 and Pandas Execution
 import os
+import ast
 import json
 import requests
 import io
@@ -9,6 +10,46 @@ import numpy as np
 import re
 import time
 import concurrent.futures
+
+# ── Sandbox: safe builtins only — blocks ALL imports and dangerous calls ──
+_SAFE_BUILTINS = {
+    '__builtins__': {},
+    'len': len, 'range': range, 'print': print,
+    'list': list, 'dict': dict, 'set': set, 'tuple': tuple,
+    'str': str, 'int': int, 'float': float, 'bool': bool,
+    'round': round, 'sum': sum, 'min': min, 'max': max, 'abs': abs,
+    'enumerate': enumerate, 'zip': zip, 'sorted': sorted, 'reversed': reversed,
+    'isinstance': isinstance, 'type': type, 'hasattr': hasattr,
+    'True': True, 'False': False, 'None': None,
+}
+
+# Patterns that must never appear in LLM-generated code
+_BLOCKED_PATTERNS = re.compile(
+    r'\b(import|__import__|exec|eval|open|compile|globals|locals|vars|dir'
+    r'|getattr|setattr|delattr|os|sys|subprocess|socket|shutil|pathlib'
+    r'|requests|urllib|httpx|pickle|shelve|builtins)\b'
+    r'|__\w+__'       # any dunder
+    r'|\\x[0-9a-fA-F]{2}'  # hex escapes used to smuggle code
+)
+
+def _is_safe_code(code: str) -> tuple[bool, str]:
+    """Layer 1: regex scan. Layer 2: AST walk for imports/calls."""
+    if _BLOCKED_PATTERNS.search(code):
+        return False, "Blocked pattern detected in generated code."
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return False, f"Syntax error: {e}"
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return False, "Import statements are not allowed."
+        if isinstance(node, ast.Call):
+            # block any call to attribute chains like os.system(...)
+            if isinstance(node.func, ast.Attribute):
+                if isinstance(node.func.value, ast.Name):
+                    if node.func.value.id in ('os', 'sys', 'subprocess', 'shutil'):
+                        return False, f"Blocked system call: {node.func.value.id}"
+    return True, ""
 
 def _post_with_retry(url, headers, json_payload, max_retries=2, backoff=1):
     for attempt in range(max_retries):
@@ -26,18 +67,27 @@ def _post_with_retry(url, headers, json_payload, max_retries=2, backoff=1):
                 raise e
 
 def execute_pandas_code(df, code_str):
-    """Executes pandas code dynamically in a restricted local scope."""
-    local_vars = {"df": df, "pd": pd, "np": np, "result": None}
-    
-    # Clean code block
+    """Executes pandas code in a sandboxed scope with restricted builtins."""
+    # Clean markdown code fences
     code_str = re.sub(r'```python\n?', '', code_str)
     code_str = re.sub(r'```\n?', '', code_str)
     code_str = code_str.strip()
-    
+
+    # Security: reject unsafe code before exec
+    safe, reason = _is_safe_code(code_str)
+    if not safe:
+        return False, f"Security check failed: {reason}", None, code_str
+
+    local_vars = {"df": df, "pd": pd, "np": np, "result": None}
+    # Restricted globals: only safe builtins + pandas/numpy
+    sandbox_globals = dict(_SAFE_BUILTINS)
+    sandbox_globals["pd"] = pd
+    sandbox_globals["np"] = np
+
     stdout = io.StringIO()
     with contextlib.redirect_stdout(stdout):
         try:
-            exec(code_str, {}, local_vars)
+            exec(code_str, sandbox_globals, local_vars)  # noqa: S102
             
             res = local_vars.get("result")
             printed_out = stdout.getvalue().strip()

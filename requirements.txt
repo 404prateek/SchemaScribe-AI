@@ -3,6 +3,8 @@ uvicorn
 pandas
 python-multipart
 requests
+httpx
+redis
 python-dotenv
 pydantic
 openpyxl

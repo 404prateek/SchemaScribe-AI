@@ -1,6 +1,7 @@
 // app.js - Frontend Logic for Intelligent Data Dictionary & Analytics Agent
 
 const BACKEND_URL = "http://127.0.0.1:8000";
+const API_KEY = "schemaScribe-dev-key-2026";
 
 // DOM Elements
 const dropZone = document.getElementById('dropZone');
@@ -105,6 +106,7 @@ async function handleUpload(files) {
 
         const response = await fetch(`${BACKEND_URL}/api/analyze`, {
             method: 'POST',
+            headers: { "X-API-Key": API_KEY },
             body: formData
         });
 
@@ -203,6 +205,9 @@ function renderDashboard(fileId, profile, isMulti = false, erdMapping = null) {
     } else {
         document.getElementById('erdCard').style.display = 'none';
     }
+
+    // Activate voice input now that a file is loaded
+    initVoiceInput();
 }
 
 async function renderMermaidErd(mapping) {
@@ -457,7 +462,7 @@ function resetToUpload() {
     document.getElementById('chatCard').style.display = 'none';
     document.getElementById('erdCard').style.display = 'none';
     document.getElementById('btnDownloadCleaned').style.display = 'none';
-    document.getElementById('btnDownloadCleaned').href = '#';
+    document.getElementById('btnDownloadCleaned').style.removeProperty('display');
     dashboardWorkspace.style.display = 'none';
     loadingState.style.display = 'none';
     uploadCard.style.display = 'block';
@@ -465,21 +470,44 @@ function resetToUpload() {
 
 document.getElementById('btnReset').addEventListener('click', () => {
     if (currentFileId) {
-        fetch(`${BACKEND_URL}/api/reset/${currentFileId}`, { method: 'POST' }).catch(e => console.error(e));
+        fetch(`${BACKEND_URL}/api/reset/${currentFileId}`, { method: 'POST', headers: { "X-API-Key": API_KEY } }).catch(e => console.error(e));
     }
     resetToUpload();
 });
 
+// Helper: authenticated file download via fetch → Blob
+async function _downloadWithAuth(url, defaultFilename) {
+    try {
+        const response = await fetch(url, { headers: { 'X-API-Key': API_KEY } });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            alert('Export failed: ' + (err.detail || response.statusText));
+            return;
+        }
+        const blob = await response.blob();
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="?([^"]+)"?/);
+        const filename = match ? match[1] : defaultFilename;
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    } catch (err) {
+        alert('Export error: ' + err.message);
+    }
+}
+
 // Export Actions
 document.getElementById('btnExportJson').addEventListener('click', () => {
     if (currentFileId) {
-        window.location.href = `${BACKEND_URL}/api/export/${currentFileId}/json`;
+        _downloadWithAuth(`${BACKEND_URL}/api/export/${currentFileId}/json`, 'data_dictionary.json');
     }
 });
 
 document.getElementById('btnExportMarkdown').addEventListener('click', () => {
     if (currentFileId) {
-        window.location.href = `${BACKEND_URL}/api/export/${currentFileId}/markdown`;
+        _downloadWithAuth(`${BACKEND_URL}/api/export/${currentFileId}/markdown`, 'data_dictionary.md');
     }
 });
 
@@ -575,7 +603,8 @@ document.getElementById('btnExecuteClean').addEventListener('click', async () =>
         const response = await fetch(`${BACKEND_URL}/api/clean`, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-API-Key': API_KEY
             },
             body: JSON.stringify({
                 file_id: currentFileId,
@@ -598,8 +627,13 @@ document.getElementById('btnExecuteClean').addEventListener('click', async () =>
         
         const downloadBtn = document.getElementById('btnDownloadCleaned');
         downloadBtn.style.display = 'inline-flex';
-        downloadBtn.href = `${BACKEND_URL}/api/download/${data.clean_file_id}`;
-        downloadBtn.setAttribute('download', data.download_name || 'cleaned_dataset.csv');
+        downloadBtn.style.setProperty('display', 'inline-flex');
+        const cleanUrl = `${BACKEND_URL}/api/download/${data.clean_file_id}`;
+        const cleanFilename = data.download_name || 'cleaned_dataset.csv';
+        downloadBtn.onclick = (e) => {
+            e.preventDefault();
+            _downloadWithAuth(cleanUrl, cleanFilename);
+        };
         
         setTimeout(() => {
             executeBtn.innerHTML = originalText;
@@ -643,7 +677,7 @@ async function openInvestigateDrawer(colName) {
         const context = contextObj ? contextObj.value : "";
         const response = await fetch(`${BACKEND_URL}/api/investigate`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
             body: JSON.stringify({ file_id: currentFileId, col_name: colName, dataset_context: context })
         });
         
@@ -724,7 +758,7 @@ async function sendChatMessage() {
     try {
         const response = await fetch(`${BACKEND_URL}/api/chat`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
             body: JSON.stringify({ file_id: currentFileId, message: msg })
         });
         
@@ -779,4 +813,109 @@ function appendChatMsg(role, htmlContent, id = null) {
     
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// ── Voice Input (Sarvam AI Speech-to-Text) ───────────────────────────────────
+
+function _showVoiceToast(msg) {
+    const toast = document.getElementById('voiceToast');
+    const span  = document.getElementById('voiceToastMsg');
+    if (!toast) return;
+    span.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+async function sendVoiceToBackend(audioBlob) {
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'recording.webm');
+    const response = await fetch(`${BACKEND_URL}/api/voice-to-text`, {
+        method: 'POST',
+        headers: { "X-API-Key": API_KEY },
+        body: formData
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || `Server error ${response.status}`);
+    }
+    const data = await response.json();
+    return data.transcript || '';
+}
+
+function initVoiceInput() {
+    const btn = document.getElementById('voiceInputBtn');
+    if (!btn || btn._voiceInitialised) return;   // guard against double-init
+    btn._voiceInitialised = true;
+
+    // Check browser support
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
+        btn.style.display = 'none';
+        return;
+    }
+
+    let mediaRecorder = null;
+    let audioChunks   = [];
+    let isRecording   = false;
+
+    btn.addEventListener('click', async () => {
+        if (!isRecording) {
+            // ── START recording ──────────────────────────────────────────────
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                    ? 'audio/webm;codecs=opus'
+                    : 'audio/webm';
+
+                mediaRecorder = new MediaRecorder(stream, { mimeType });
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data && e.data.size > 0) audioChunks.push(e.data);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    // Stop all mic tracks to release browser indicator
+                    stream.getTracks().forEach(t => t.stop());
+
+                    btn.classList.remove('recording');
+                    btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
+                    btn.disabled = true;
+                    btn.title = 'Transcribing...';
+
+                    const blob = new Blob(audioChunks, { type: mimeType });
+
+                    try {
+                        const transcript = await sendVoiceToBackend(blob);
+                        if (transcript) {
+                            document.getElementById('chatInput').value = transcript;
+                            sendChatMessage();
+                        } else {
+                            _showVoiceToast('No speech detected, try again');
+                        }
+                    } catch (err) {
+                        console.error('Voice transcription error:', err);
+                        _showVoiceToast('Voice input failed, type instead');
+                    } finally {
+                        btn.disabled = false;
+                        btn.title = 'Voice input';
+                    }
+                };
+
+                mediaRecorder.start();
+                isRecording = true;
+                btn.classList.add('recording');
+                btn.innerHTML = '<i class="fa-solid fa-stop"></i>';
+                btn.title = 'Stop recording';
+            } catch (err) {
+                console.error('Microphone access error:', err);
+                _showVoiceToast('Microphone access denied');
+            }
+        } else {
+            // ── STOP recording ───────────────────────────────────────────────
+            isRecording = false;
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+        }
+    });
 }

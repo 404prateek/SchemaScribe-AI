@@ -1,15 +1,28 @@
 import os
 import json
+import asyncio
+import threading
 import requests
 import time
 
-def _post_with_retry(url, headers, json_payload, max_retries=2, backoff=1):
+def _post_with_retry(url, headers, json_payload, max_retries=4, backoff=3):
+    """
+    POST with retry + automatic Groq key rotation on 429.
+    `headers` must contain the Authorization key; it will be mutated on rotation.
+    """
     for attempt in range(max_retries):
         try:
-            response = requests.post(url, headers=headers, json=json_payload, timeout=5)
-            if response.status_code in [429, 500, 502, 503, 504]:
+            response = requests.post(url, headers=headers, json=json_payload, timeout=10)
+            if response.status_code == 429:
+                next_key = groq_pool.rotate()
+                if next_key:
+                    headers["Authorization"] = f"Bearer {next_key}"
                 if attempt < max_retries - 1:
-                    time.sleep(backoff)
+                    time.sleep(backoff * (attempt + 1))
+                    continue
+            elif response.status_code in [500, 502, 503, 504]:
+                if attempt < max_retries - 1:
+                    time.sleep(backoff * (attempt + 1))
                     continue
             return response
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
@@ -32,12 +45,63 @@ def load_env():
 # Load env immediately
 load_env()
 
+# ── Groq API Key Pool ──────────────────────────────────────────────────────
+class _GroqKeyPool:
+    """
+    Round-robin key pool for Groq API keys.
+    On a 429 rate-limit response the caller advances to the next key automatically.
+    
+    .env configuration (add as many keys as you have):
+        GROQ_API_KEY=primary_key
+        GROQ_API_KEYS=primary_key,second_key,third_key   # optional pool
+    If only GROQ_API_KEY is set it works as a single-key pool (original behaviour).
+    """
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._index = 0
+        self._keys: list[str] = []
+
+    def _load(self) -> list[str]:
+        """Read keys fresh from env every time (picks up server restarts / reloads)."""
+        pool_str = os.environ.get("GROQ_API_KEYS", "")
+        if pool_str:
+            keys = [k.strip() for k in pool_str.split(",") if k.strip()]
+        else:
+            keys = []
+        primary = os.environ.get("GROQ_API_KEY", "").strip()
+        if primary and primary not in keys:
+            keys.insert(0, primary)
+        return keys
+
+    def current(self) -> str:
+        """Return the currently active key."""
+        self._keys = self._load()
+        if not self._keys:
+            return ""
+        with self._lock:
+            return self._keys[self._index % len(self._keys)]
+
+    def rotate(self) -> str:
+        """Advance to the next key (called on 429) and return it."""
+        self._keys = self._load()
+        if not self._keys:
+            return ""
+        with self._lock:
+            self._index = (self._index + 1) % len(self._keys)
+            return self._keys[self._index]
+
+    def __len__(self):
+        return len(self._load())
+
+
+groq_pool = _GroqKeyPool()
+
 def generate_column_insights(col_name, profile_details, dataset_context=""):
     """
     Acts like an expert Senior Data Analyst. Calls the lightning-fast Groq API 
     (Llama3-8b) to generate JSON-formatted business descriptions and cleaning recommendations.
     """
-    api_key = os.environ.get("GROQ_API_KEY")
+    api_key = groq_pool.current()
     if not api_key:
         return {
             "description": "API Key missing. Please set GROQ_API_KEY in the app/.env file.",
@@ -120,7 +184,7 @@ def generate_outlier_insights(col_name, outliers_data, dataset_context=""):
     Calls the Llama-3 API to generate a physical/business explanation for why these 
     specific extreme outliers might exist based on their row context.
     """
-    api_key = os.environ.get("GROQ_API_KEY")
+    api_key = groq_pool.current()
     if not api_key:
         return {
             "explanation": "API Key missing. Please set GROQ_API_KEY in the app/.env file to unlock AI outlier analysis."
@@ -178,3 +242,97 @@ def generate_outlier_insights(col_name, outliers_data, dataset_context=""):
         return {
             "explanation": f"AI Engine Connection Error: {str(e)}"
         }
+
+
+async def generate_column_insights_async(col_name: str, profile_details: dict, dataset_context: str = "") -> dict:
+    """
+    Native async version of generate_column_insights using httpx.AsyncClient.
+    Allows true async concurrent Groq calls without thread pool overhead.
+    Automatically rotates to the next pool key on 429.
+    """
+    import httpx
+
+    api_key = groq_pool.current()
+    if not api_key:
+        return {
+            "description": "API Key missing. Please set GROQ_API_KEY in the app/.env file.",
+            "recommendation": "Set your Groq API key to unlock expert AI descriptions."
+        }
+
+    # Build the same statistical profile text as the sync version
+    stats_text = (
+        f"Column Name: '{col_name}'\n"
+        f"Basic Pandas Type: {profile_details.get('pandas_dtype')}\n"
+        f"Inferred Semantic Type: {profile_details.get('semantic_type')}\n"
+        f"Completeness: {profile_details.get('non_null_count')} valid records, "
+        f"{profile_details.get('null_percentage')}% missing.\n"
+        f"Cardinality: {profile_details.get('unique_count')} unique values ({profile_details.get('unique_ratio')}% ratio).\n"
+        f"Sample values: [{profile_details.get('sample_data')}]\n"
+    )
+
+    if profile_details.get("mean") is not None:
+        stats_text += (
+            f"Numeric Distribution: Min={profile_details.get('min')}, Max={profile_details.get('max')}, "
+            f"Mean={profile_details.get('mean')}, StdDev={profile_details.get('std')}.\n"
+            f"Anomalies: {profile_details.get('outliers_count')} outliers detected via Interquartile Range (IQR).\n"
+        )
+
+    system_prompt = (
+        "You are a world-class Principal Data Architect and Senior Data Analyst with 15+ years of experience in enterprise business intelligence, database indexing, and data governance.\n"
+        "Your objective is to analyze a column's statistical profile, cardinality, null ratios, anomalies, and sample values, and write authoritative, elite-level business summaries.\n"
+        "You must output your response in EXACT JSON format with these two fields:\n"
+        "1. 'description': A highly professional, single-sentence executive business definition.\n"
+        "2. 'recommendation': An expert data quality, cleaning, and optimization recommendation.\n"
+        "Your output must be valid JSON only, without any markdown codeblocks."
+    )
+
+    user_prompt = (
+        f"Please analyze this column profile:\n\n{stats_text}\n"
+        f"Optional Dataset Context: {dataset_context}\n"
+        "Return the 'description' and 'recommendation' strictly in JSON format."
+    )
+
+    payload = {
+        "model": "llama-3.1-8b-instant",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0.15,
+        "max_tokens": 300,
+        "response_format": {"type": "json_object"}
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers=headers,
+                    json=payload
+                )
+                if response.status_code == 429:
+                    headers["Authorization"] = f"Bearer {groq_pool.rotate()}"
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                response.raise_for_status()
+                content_str = response.json()["choices"][0]["message"]["content"]
+                parsed = json.loads(content_str)
+                return {
+                    "description": parsed.get("description", "No description generated."),
+                    "recommendation": parsed.get("recommendation", "No recommendations found.")
+                }
+        except Exception:
+            if attempt == 2:
+                return {
+                    "description": "Could not generate AI description.",
+                    "recommendation": "AI engine temporarily unavailable. Check logs."
+                }
+            await asyncio.sleep(2 ** attempt)
+
+    return {"description": "Could not generate description.", "recommendation": ""}

@@ -3,20 +3,46 @@ import os
 import shutil
 import uuid
 import json
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+import asyncio
+import redis
+import pickle
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Security, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from typing import Optional, List
 
 # Local imports
-# Local imports
 from .profiler import profile_dataset, generate_ddl_scripts, generate_erd_mapping
-from .describer import generate_column_insights, generate_outlier_insights
+from .describer import generate_column_insights, generate_column_insights_async, generate_outlier_insights
 from .chat import ask_dataset_chat
 
 app = FastAPI(title="Intelligent Data Dictionary & Analytics Agent")
+
+# ── API Key Auth ──────────────────────────────────────────────────────────────
+# Set APP_API_KEY in app/.env to enable auth. If not set, auth is skipped
+# (safe for local dev, required for production deployment).
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+async def verify_api_key(key: Optional[str] = Security(_api_key_header)):
+    required = os.environ.get("APP_API_KEY")
+    if required and key != required:
+        raise HTTPException(status_code=403, detail="Invalid or missing API key. Set X-API-Key header.")
+
+# ── Semaphore: max 8 concurrent Groq calls to stay within rate limits ─────────
+_groq_semaphore = asyncio.Semaphore(8)
+
+async def _fetch_insight_limited(col_profile, dataset_context):
+    async with _groq_semaphore:
+        result = await generate_column_insights_async(
+            col_profile["name"], col_profile, dataset_context
+        )
+        return col_profile, result
+
+# ── File upload size limit (100 MB) ──────────────────────────────────────────
+_MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
 
 # Enable CORS for frontend integration
 app.add_middleware(
@@ -30,8 +56,57 @@ app.add_middleware(
 TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_uploads")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Cache dictionary in memory for easy exporting
-analysis_cache = {}
+# ── Session Store: Redis with in-process dict fallback ──────────────────────
+class SessionStore:
+    def __init__(self):
+        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+        try:
+            self.r = redis.from_url(redis_url, decode_responses=False)
+            self.r.ping()
+            self.available = True
+        except Exception:
+            self.r = None
+            self.available = False
+        self._fallback = {}
+        self.TTL = 7200  # 2 hours
+
+    def set(self, key: str, value: dict):
+        if self.available:
+            self.r.setex(key, self.TTL, pickle.dumps(value))
+        else:
+            self._fallback[key] = value
+
+    def get(self, key: str):
+        if self.available:
+            raw = self.r.get(key)
+            return pickle.loads(raw) if raw else None
+        return self._fallback.get(key)
+
+    def delete(self, key: str):
+        if self.available:
+            self.r.delete(key)
+        else:
+            self._fallback.pop(key, None)
+
+    def exists(self, key: str) -> bool:
+        if self.available:
+            return bool(self.r.exists(key))
+        return key in self._fallback
+
+    def items_with_prefix(self, prefix: str):
+        """Yields (key, value) pairs for all keys starting with prefix."""
+        if self.available:
+            for k in self.r.scan_iter(f"{prefix}*"):
+                raw = self.r.get(k)
+                if raw:
+                    key_str = k.decode() if isinstance(k, bytes) else k
+                    yield key_str, pickle.loads(raw)
+        else:
+            for k, v in list(self._fallback.items()):
+                if k.startswith(prefix):
+                    yield k, v
+
+store = SessionStore()
 
 class ColumnProfile(BaseModel):
     name: str
@@ -59,7 +134,7 @@ class DatasetProfile(BaseModel):
     health_score: float
     columns: List[ColumnProfile]
 
-@app.post("/api/analyze")
+@app.post("/api/analyze", dependencies=[Depends(verify_api_key)])
 async def analyze_file(files: List[UploadFile] = File(...), dataset_context: Optional[str] = Form("")):
     """
     Saves the uploaded file(s), runs the pandas profiling engine, generates 
@@ -76,30 +151,49 @@ async def analyze_file(files: List[UploadFile] = File(...), dataset_context: Opt
             ext = os.path.splitext(file.filename)[1].lower()
             if ext not in ['.csv', '.xlsx', '.xls', '.json']:
                 continue
-                
+
+            # Backend file size enforcement
+            file_bytes = await file.read()
+            if len(file_bytes) > _MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail=f"{file.filename} exceeds the 100 MB upload limit.")
+
             temp_file_path = os.path.join(TEMP_DIR, f"{workspace_id}_{file.filename}")
-            
             with open(temp_file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+                buffer.write(file_bytes)
                 
             # 1. Run pandas profiling
             profile_results = profile_dataset(temp_file_path)
             profile_results["filename"] = file.filename
             
-            # 2. Enrich columns with Groq Llama-3 AI business descriptions
+            # 2. Enrich columns with Groq Llama-3 AI business descriptions in parallel
             if not is_multi:
-                enriched_columns = []
+                # Pre-fill empty columns instantly (no API call needed)
                 for col_profile in profile_results["columns"]:
-                    ai_insights = generate_column_insights(
-                        col_name=col_profile["name"],
-                        profile_details=col_profile,
-                        dataset_context=dataset_context
-                    )
+                    if col_profile.get("null_percentage", 0) == 100.0 or col_profile.get("semantic_type") == "Empty / Missing":
+                        col_profile["description"] = "This column contains no valid data (100% missing). Populate it before analysis."
+                        col_profile["recommendation"] = "Drop this column or investigate the data pipeline — all values are null."
+
+                # Collect only columns that need an AI call
+                cols_needing_ai = [
+                    c for c in profile_results["columns"]
+                    if c.get("null_percentage", 0) != 100.0 and c.get("semantic_type") != "Empty / Missing"
+                ]
+
+                # Fire all AI calls concurrently, rate-limited by semaphore
+                results = await asyncio.gather(
+                    *[_fetch_insight_limited(c, dataset_context) for c in cols_needing_ai],
+                    return_exceptions=True
+                )
+                for item in results:
+                    if isinstance(item, Exception):
+                        continue  # leave placeholder text already set
+                    col_profile, ai_insights = item
                     col_profile["description"] = ai_insights["description"]
                     col_profile["recommendation"] = ai_insights["recommendation"]
-                    enriched_columns.append(col_profile)
+
+                enriched_columns = profile_results["columns"]
                 profile_results["columns"] = enriched_columns
-                
+
                 # 3. Generate Database DDL Scripts
                 profile_results["sql_ddl"] = generate_ddl_scripts(file.filename, enriched_columns)
             else:
@@ -114,11 +208,11 @@ async def analyze_file(files: List[UploadFile] = File(...), dataset_context: Opt
                 "profile": profile_results
             })
             
-            analysis_cache[f"{workspace_id}_{file.filename}"] = {
+            store.set(f"{workspace_id}_{file.filename}", {
                 "filename": file.filename,
                 "file_path": temp_file_path,
                 "data": profile_results
-            }
+            })
             
         if len(profiles) == 0:
             raise HTTPException(status_code=400, detail="No valid files uploaded.")
@@ -126,7 +220,7 @@ async def analyze_file(files: List[UploadFile] = File(...), dataset_context: Opt
         if not is_multi:
             p = profiles[0]
             # Override file_id backward compatibility
-            analysis_cache[workspace_id] = analysis_cache[p["file_id"]]
+            store.set(workspace_id, store.get(p["file_id"]))
             return JSONResponse(content={
                 "status": "success",
                 "file_id": workspace_id,
@@ -171,15 +265,15 @@ async def analyze_file(files: List[UploadFile] = File(...), dataset_context: Opt
         # Deletion is handled when reset is triggered.
         pass
 
-@app.get("/api/export/{file_id}/{format_type}")
+@app.get("/api/export/{file_id}/{format_type}", dependencies=[Depends(verify_api_key)])
 async def export_dictionary(file_id: str, format_type: str):
     """
     Exports the cached data dictionary in either Markdown or JSON formats.
     """
-    if file_id not in analysis_cache:
+    if not store.exists(file_id):
         raise HTTPException(status_code=404, detail="Analysis results not found or expired.")
 
-    cached = analysis_cache[file_id]
+    cached = store.get(file_id)
     filename = cached["filename"]
     data = cached["data"]
 
@@ -229,25 +323,22 @@ async def export_dictionary(file_id: str, format_type: str):
     else:
         raise HTTPException(status_code=400, detail="Invalid export format! Supported: markdown, json.")
 
-# Cleaning data cache
-cleaned_files_cache = {}
-
 class CleanRequest(BaseModel):
     file_id: str
     noise_value: Optional[float] = None
     numeric_imputation: str = "median" # median, mean, none
     categorical_imputation: str = "mode" # mode, placeholder, none
 
-@app.post("/api/clean")
+@app.post("/api/clean", dependencies=[Depends(verify_api_key)])
 async def clean_dataset(request: CleanRequest):
     """
     Cleans sensor noise and applies smart imputation (median/mean/mode) 
     to numeric and categorical columns, then caches the cleaned dataset.
     """
-    if request.file_id not in analysis_cache:
+    if not store.exists(request.file_id):
         raise HTTPException(status_code=404, detail="Original analysis dataset not found.")
         
-    cached = analysis_cache[request.file_id]
+    cached = store.get(request.file_id)
     file_path = cached.get("file_path")
     filename = cached["filename"]
     
@@ -305,10 +396,10 @@ async def clean_dataset(request: CleanRequest):
         
         # Cache for download
         download_name = f"Cleaned_{os.path.splitext(filename)[0]}.csv"
-        cleaned_files_cache[cleaned_file_id] = {
+        store.set(f"cleaned:{cleaned_file_id}", {
             "path": cleaned_path,
             "filename": download_name
-        }
+        })
         
         return JSONResponse(content={
             "status": "success",
@@ -319,13 +410,13 @@ async def clean_dataset(request: CleanRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cleaning failed: {str(e)}")
 
-@app.get("/api/download/{clean_file_id}")
+@app.get("/api/download/{clean_file_id}", dependencies=[Depends(verify_api_key)])
 async def download_cleaned_file(clean_file_id: str):
     """ Serves the cleaned CSV file for download. """
-    if clean_file_id not in cleaned_files_cache:
+    if not store.exists(f"cleaned:{clean_file_id}"):
         raise HTTPException(status_code=404, detail="Cleaned file not found or expired.")
         
-    cached = cleaned_files_cache[clean_file_id]
+    cached = store.get(f"cleaned:{clean_file_id}")
     path = cached["path"]
     filename = cached["filename"]
     
@@ -337,28 +428,24 @@ async def download_cleaned_file(clean_file_id: str):
 @app.post("/api/reset/{file_id}")
 async def reset_dataset(file_id: str):
     """ Cleans up cached file paths from disk and clears the cache for a file_id. """
-    if file_id in analysis_cache:
-        cached = analysis_cache[file_id]
+    if store.exists(file_id):
+        cached = store.get(file_id)
         file_path = cached.get("file_path")
         if file_path and os.path.exists(file_path):
             try:
                 os.remove(file_path)
             except:
                 pass
-        del analysis_cache[file_id]
+        store.delete(file_id)
         
     # Also clean related clean files
-    keys_to_del = []
-    for k, v in cleaned_files_cache.items():
+    for k, v in store.items_with_prefix("cleaned:"):
         if os.path.exists(v["path"]):
             try:
                 os.remove(v["path"])
             except:
                 pass
-        keys_to_del.append(k)
-            
-    for k in keys_to_del:
-        del cleaned_files_cache[k]
+        store.delete(k)
         
     return {"status": "success", "message": "Cache and files cleared."}
 
@@ -371,12 +458,12 @@ class InvestigateRequest(BaseModel):
     col_name: str
     dataset_context: Optional[str] = ""
 
-@app.post("/api/investigate")
+@app.post("/api/investigate", dependencies=[Depends(verify_api_key)])
 async def investigate_outliers(request: InvestigateRequest):
-    if request.file_id not in analysis_cache:
+    if not store.exists(request.file_id):
         raise HTTPException(status_code=404, detail="Dataset analysis not found.")
         
-    data = analysis_cache[request.file_id]["data"]
+    data = store.get(request.file_id)["data"]
     
     col_profile = None
     for col in data["columns"]:
@@ -401,12 +488,63 @@ class ChatRequest(BaseModel):
     file_id: str
     message: str
 
-@app.post("/api/chat")
+# ── Voice-to-Text (Sarvam AI) ─────────────────────────────────────────────────
+@app.post("/api/voice-to-text")
+async def voice_to_text(audio: UploadFile = File(...)):
+    """
+    Receives an audio blob (webm/wav) from the browser MediaRecorder API,
+    forwards it to Sarvam AI's speech-to-text endpoint, and returns the transcript.
+    SARVAM_API_KEY must be set in app/.env.
+    """
+    from .describer import load_env as _reload_env
+    _reload_env()  # pick up key if server wasn't restarted after .env edit
+
+    api_key = os.environ.get("SARVAM_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="SARVAM_API_KEY not set in app/.env.")
+
+    try:
+        import requests as _requests
+
+        audio_bytes = await audio.read()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="Empty audio file received.")
+
+        response = _requests.post(
+            "https://api.sarvam.ai/speech-to-text",
+            headers={"api-subscription-key": api_key},
+            files={"file": (audio.filename or "audio.webm", audio_bytes, audio.content_type or "audio/webm")},
+            data={
+                "model": "saaras:v3",
+                "language_code": "unknown",
+                "mode": "transcribe",
+            },
+            timeout=30,
+        )
+
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Sarvam API error {response.status_code}: {response.text[:200]}"
+            )
+
+        result = response.json()
+        # Sarvam returns {"transcript": "...", ...}
+        transcript = result.get("transcript") or result.get("text") or ""
+        return JSONResponse(content={"transcript": transcript})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Voice transcription failed: {str(e)}")
+
+
+@app.post("/api/chat", dependencies=[Depends(verify_api_key)])
 async def chat_with_dataset(request: ChatRequest):
-    if request.file_id not in analysis_cache:
+    if not store.exists(request.file_id):
         raise HTTPException(status_code=404, detail="Dataset analysis not found.")
         
-    cached = analysis_cache[request.file_id]
+    cached = store.get(request.file_id)
     file_path = cached.get("file_path")
     columns_profile = cached["data"]["columns"]
     
