@@ -11,10 +11,7 @@
     <link rel="stylesheet" href="style.css">
     <style>
         /* ── Voice Input Mic Button ─────────────────────────────────────── */
-        #voiceInputBtn {
-            /* matches .btn-send-chat sizing exactly */
-            flex-shrink: 0;
-        }
+        #voiceInputBtn { flex-shrink: 0; }
         #voiceInputBtn.recording {
             background: rgba(239, 68, 68, 0.3) !important;
             border-color: #EF4444 !important;
@@ -24,28 +21,255 @@
             0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55); }
             50%       { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
         }
-        /* ── Toast notification ─────────────────────────────────────────── */
+        /* ── Voice Toast ─────────────────────────────────────────────────── */
         #voiceToast {
-            position: fixed;
-            bottom: 28px;
-            right: 28px;
+            position: fixed; bottom: 28px; right: 28px;
             background: rgba(13, 20, 38, 0.92);
             border: 1px solid rgba(239, 68, 68, 0.5);
             color: #FDA4AF;
             font-family: var(--font-body, 'Inter', sans-serif);
-            font-size: 13px;
-            padding: 10px 18px;
-            border-radius: 10px;
+            font-size: 13px; padding: 10px 18px; border-radius: 10px;
             backdrop-filter: blur(12px);
-            opacity: 0;
-            transform: translateY(10px);
+            opacity: 0; transform: translateY(10px);
             transition: opacity 0.25s ease, transform 0.25s ease;
-            pointer-events: none;
-            z-index: 9999;
+            pointer-events: none; z-index: 9999;
         }
-        #voiceToast.show {
-            opacity: 1;
-            transform: translateY(0);
+        #voiceToast.show { opacity: 1; transform: translateY(0); }
+
+        /* ── DDL Action Row ──────────────────────────────────────────────── */
+        .ddl-action-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+        .btn-download-sql {
+            background: linear-gradient(135deg, rgba(6,182,212,0.18), rgba(6,182,212,0.08));
+            border: 1px solid rgba(6,182,212,0.45);
+            color: #06B6D4;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            transition: all 0.2s ease;
+        }
+        .btn-download-sql:hover {
+            background: rgba(6,182,212,0.25);
+            border-color: #06B6D4;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(6,182,212,0.25);
+        }
+        .btn-mcp-connect {
+            background: linear-gradient(135deg, rgba(139,92,246,0.22), rgba(167,139,250,0.10));
+            border: 1px solid rgba(139,92,246,0.5);
+            color: #A78BFA;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        .btn-mcp-connect::after {
+            content: 'NEW';
+            font-size: 9px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #8B5CF6, #06B6D4);
+            color: white;
+            padding: 1px 5px;
+            border-radius: 4px;
+            margin-left: 2px;
+            letter-spacing: 0.5px;
+        }
+        .btn-mcp-connect:hover {
+            background: rgba(139,92,246,0.32);
+            border-color: #8B5CF6;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 20px rgba(139,92,246,0.3);
+        }
+
+        /* ── MCP Modal Overlay ───────────────────────────────────────────── */
+        #mcpModal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(5, 8, 20, 0.82);
+            backdrop-filter: blur(10px);
+            z-index: 10000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        #mcpModal.open { display: flex; animation: fadeInModal 0.25s ease; }
+        @keyframes fadeInModal {
+            from { opacity: 0; transform: scale(0.96); }
+            to   { opacity: 1; transform: scale(1); }
+        }
+        .mcp-modal-box {
+            background: linear-gradient(145deg, rgba(13,20,40,0.98), rgba(20,12,45,0.98));
+            border: 1px solid rgba(139,92,246,0.35);
+            border-radius: 20px;
+            padding: 32px;
+            max-width: 680px;
+            width: 100%;
+            box-shadow: 0 24px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(139,92,246,0.1);
+            position: relative;
+            max-height: 92vh;
+            overflow-y: auto;
+        }
+        .mcp-modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+        .mcp-modal-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 20px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #A78BFA, #06B6D4);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .mcp-modal-subtitle {
+            font-size: 13px;
+            color: #6B7280;
+            margin-bottom: 24px;
+            margin-top: 4px;
+        }
+        .mcp-close-btn {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #9CA3AF;
+            width: 34px; height: 34px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        .mcp-close-btn:hover { background: rgba(239,68,68,0.18); color: #FDA4AF; border-color: rgba(239,68,68,0.4); }
+        .mcp-step {
+            background: rgba(255,255,255,0.035);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            padding: 18px 20px;
+            margin-bottom: 14px;
+        }
+        .mcp-step-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .mcp-step-num {
+            width: 26px; height: 26px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #8B5CF6, #06B6D4);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 12px; font-weight: 700; color: white;
+            flex-shrink: 0;
+        }
+        .mcp-step-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            color: #E5E7EB;
+        }
+        .mcp-step-badge {
+            font-size: 10px;
+            font-weight: 700;
+            background: rgba(6,182,212,0.15);
+            border: 1px solid rgba(6,182,212,0.3);
+            color: #06B6D4;
+            padding: 2px 8px;
+            border-radius: 20px;
+            letter-spacing: 0.5px;
+            margin-left: auto;
+        }
+        .mcp-code-block {
+            background: rgba(0,0,0,0.45);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 10px;
+            padding: 14px 16px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #A5F3FC;
+            line-height: 1.6;
+            white-space: pre;
+            overflow-x: auto;
+            position: relative;
+        }
+        .mcp-copy-snippet {
+            position: absolute;
+            top: 8px; right: 8px;
+            background: rgba(139,92,246,0.2);
+            border: 1px solid rgba(139,92,246,0.4);
+            color: #A78BFA;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 3px 9px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: 'Inter', sans-serif;
+        }
+        .mcp-copy-snippet:hover { background: rgba(139,92,246,0.35); }
+        .mcp-divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(139,92,246,0.25), transparent);
+            margin: 20px 0;
+        }
+        .mcp-client-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 14px;
+            flex-wrap: wrap;
+        }
+        .mcp-tab-btn {
+            padding: 6px 14px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: transparent;
+            color: #9CA3AF;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .mcp-tab-btn.active {
+            background: rgba(139,92,246,0.2);
+            border-color: rgba(139,92,246,0.5);
+            color: #A78BFA;
+        }
+        .mcp-tab-btn:hover:not(.active) { background: rgba(255,255,255,0.06); color: #E5E7EB; }
+        .mcp-tab-content { display: none; }
+        .mcp-tab-content.active { display: block; }
+        .mcp-status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #10B981;
+            display: inline-block;
+            margin-right: 6px;
+            box-shadow: 0 0 6px rgba(16,185,129,0.7);
+            animation: pulse-green 2s ease-in-out infinite;
+        }
+        @keyframes pulse-green {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
         }
     </style>
 </head>
@@ -189,9 +413,17 @@
                 </div>
                 <div class="sql-code-container">
                     <pre class="sql-code-block"><code id="sqlDdlCode">-- DDL code will appear here...</code></pre>
-                    <button class="btn btn-primary btn-copy-code" id="btnCopyDdl">
-                        <i class="fa-solid fa-copy"></i> Copy Code
-                    </button>
+                    <div class="ddl-action-row">
+                        <button class="btn btn-primary btn-copy-code" id="btnCopyDdl">
+                            <i class="fa-solid fa-copy"></i> Copy Code
+                        </button>
+                        <button class="btn btn-download-sql" id="btnDownloadDdl">
+                            <i class="fa-solid fa-file-arrow-down"></i> Download .sql
+                        </button>
+                        <button class="btn btn-mcp-connect" id="btnOpenMcp">
+                            <i class="fa-solid fa-plug-circle-bolt"></i> Connect to MCP
+                        </button>
+                    </div>
                 </div>
             </section>
 
@@ -332,6 +564,90 @@
         </div>
         <div class="drawer-content" id="drawerContent">
             <!-- Dynamic Content Injected Here -->
+        </div>
+    </div>
+
+    <!-- MCP Connect Modal -->
+    <div id="mcpModal">
+        <div class="mcp-modal-box">
+            <div class="mcp-modal-header">
+                <div class="mcp-modal-title">
+                    <i class="fa-solid fa-plug-circle-bolt"></i>
+                    Connect to MCP Server
+                </div>
+                <button class="mcp-close-btn" id="btnCloseMcp"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <p class="mcp-modal-subtitle">Expose your active schema to AI assistants like Claude Desktop, Cursor, or Windsurf via the Model Context Protocol (MCP).</p>
+
+            <div class="mcp-step">
+                <div class="mcp-step-header">
+                    <div class="mcp-step-num">1</div>
+                    <div class="mcp-step-title">Your local MCP Server is ready</div>
+                    <span class="mcp-step-badge"><span class="mcp-status-dot"></span>LIVE</span>
+                </div>
+                <p style="font-size:12px;color:#9CA3AF;margin-bottom:10px;">SchemaScribe runs an MCP-compatible SSE endpoint on your backend. No extra setup required.</p>
+                <div class="mcp-code-block" style="position:relative;">http://127.0.0.1:8000/sse<button class="mcp-copy-snippet" onclick="mcpCopySnippet(this, 'http://127.0.0.1:8000/sse')">Copy</button></div>
+            </div>
+
+            <div class="mcp-divider"></div>
+
+            <div class="mcp-step">
+                <div class="mcp-step-header">
+                    <div class="mcp-step-num">2</div>
+                    <div class="mcp-step-title">Add to your AI client config</div>
+                </div>
+                <div class="mcp-client-tabs">
+                    <button class="mcp-tab-btn active" onclick="switchMcpTab('claude', this)"><i class="fa-solid fa-robot"></i> Claude Desktop</button>
+                    <button class="mcp-tab-btn" onclick="switchMcpTab('cursor', this)"><i class="fa-solid fa-arrow-pointer"></i> Cursor</button>
+                    <button class="mcp-tab-btn" onclick="switchMcpTab('windsurf', this)"><i class="fa-solid fa-wind"></i> Windsurf</button>
+                    <button class="mcp-tab-btn" onclick="switchMcpTab('generic', this)"><i class="fa-solid fa-code"></i> Generic SSE</button>
+                </div>
+
+                <div id="mcpTab-claude" class="mcp-tab-content active">
+                    <p style="font-size:11px;color:#6B7280;margin-bottom:8px;">Add this to <code style="color:#A78BFA;background:rgba(139,92,246,0.1);padding:1px 5px;border-radius:4px;">~/.config/claude/claude_desktop_config.json</code></p>
+                    <div class="mcp-code-block" style="position:relative;" id="snippetClaude">{
+  "mcpServers": {
+    "schemascribe": {
+      "command": "node",
+      "args": ["-e", "const e=require('http');const s=e.request({hostname:'127.0.0.1',port:8000,path:'/sse',method:'GET'},r=>{r.pipe(process.stdout)});s.end();"],
+      "env": {}
+    }
+  }
+}<button class="mcp-copy-snippet" onclick="mcpCopySnippet(this, document.getElementById('snippetClaude').textContent)">Copy</button></div>
+                    <p style="font-size:11px;color:#6B7280;margin-top:8px;"><i class="fa-solid fa-lightbulb" style="color:#FBBF24;"></i> Or use the SSE URL directly if your Claude Desktop supports HTTP MCP servers.</p>
+                </div>
+
+                <div id="mcpTab-cursor" class="mcp-tab-content">
+                    <p style="font-size:11px;color:#6B7280;margin-bottom:8px;">In Cursor → Settings → MCP → Add New Server:</p>
+                    <div class="mcp-code-block" style="position:relative;">Name:  SchemaScribe AI
+Type:  sse
+URL:   http://127.0.0.1:8000/sse<button class="mcp-copy-snippet" onclick="mcpCopySnippet(this, 'http://127.0.0.1:8000/sse')">Copy URL</button></div>
+                    <p style="font-size:11px;color:#6B7280;margin-top:8px;"><i class="fa-solid fa-lightbulb" style="color:#FBBF24;"></i> Cursor natively supports SSE MCP — just paste the URL above.</p>
+                </div>
+
+                <div id="mcpTab-windsurf" class="mcp-tab-content">
+                    <p style="font-size:11px;color:#6B7280;margin-bottom:8px;">In Windsurf → Cascade Settings → MCP Servers → Add:</p>
+                    <div class="mcp-code-block" style="position:relative;">{
+  "name": "schemascribe",
+  "serverUrl": "http://127.0.0.1:8000/sse"
+}<button class="mcp-copy-snippet" onclick="mcpCopySnippet(this, '{\n  "name": "schemascribe",\n  "serverUrl": "http://127.0.0.1:8000/sse"\n}')">Copy</button></div>
+                </div>
+
+                <div id="mcpTab-generic" class="mcp-tab-content">
+                    <p style="font-size:11px;color:#6B7280;margin-bottom:8px;">Any MCP-compatible client supporting SSE transport:</p>
+                    <div class="mcp-code-block" style="position:relative;">Transport: SSE (Server-Sent Events)
+Endpoint:  http://127.0.0.1:8000/sse
+Messages:  http://127.0.0.1:8000/messages
+Auth:      X-API-Key: schemaScribe-dev-key-2026<button class="mcp-copy-snippet" onclick="mcpCopySnippet(this, 'http://127.0.0.1:8000/sse')">Copy URL</button></div>
+                </div>
+            </div>
+
+            <div class="mcp-divider"></div>
+
+            <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:#6B7280;">
+                <i class="fa-solid fa-shield-halved" style="color:#10B981;"></i>
+                Your data never leaves your local machine. The MCP server runs entirely on localhost.
+            </div>
         </div>
     </div>
 

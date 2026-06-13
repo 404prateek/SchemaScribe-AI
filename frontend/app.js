@@ -620,6 +620,77 @@ document.getElementById('btnCopyDdl').onclick = () => {
     });
 };
 
+// ── Download DDL as .sql file ─────────────────────────────────────────────────
+document.getElementById('btnDownloadDdl').onclick = () => {
+    const codeText = document.getElementById('sqlDdlCode').textContent;
+    if (!codeText || codeText.trim() === '-- DDL code will appear here...') {
+        alert('No DDL code to download. Upload a dataset first.');
+        return;
+    }
+    const dbLabel = activeDdlDb || 'sql';
+    const filename = `schema_${dbLabel}.sql`;
+    const blob = new Blob([codeText], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+
+    // Brief flash feedback
+    const btn = document.getElementById('btnDownloadDdl');
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<i class="fa-solid fa-check"></i> Downloaded!';
+    btn.style.color = '#10B981';
+    btn.style.borderColor = '#10B981';
+    setTimeout(() => { btn.innerHTML = orig; btn.style.color = ''; btn.style.borderColor = ''; }, 2000);
+};
+
+// ── MCP Connect Modal ─────────────────────────────────────────────────────────
+document.getElementById('btnOpenMcp').onclick = () => {
+    document.getElementById('mcpModal').classList.add('open');
+};
+document.getElementById('btnCloseMcp').onclick = () => {
+    document.getElementById('mcpModal').classList.remove('open');
+};
+// Close on backdrop click
+document.getElementById('mcpModal').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('mcpModal')) {
+        document.getElementById('mcpModal').classList.remove('open');
+    }
+});
+// Close on Escape key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') document.getElementById('mcpModal').classList.remove('open');
+});
+
+function switchMcpTab(tabId, btn) {
+    // Deactivate all tabs & contents
+    document.querySelectorAll('.mcp-tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.mcp-tab-content').forEach(c => c.classList.remove('active'));
+    // Activate selected
+    btn.classList.add('active');
+    const content = document.getElementById('mcpTab-' + tabId);
+    if (content) content.classList.add('active');
+}
+
+function mcpCopySnippet(btn, text) {
+    // strip the button's own text from the content if it leaked in
+    const clean = text.replace(/^Copy.*$/m, '').trim();
+    navigator.clipboard.writeText(clean).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = '✓ Copied';
+        btn.style.background = 'rgba(16,185,129,0.25)';
+        btn.style.borderColor = '#10B981';
+        btn.style.color = '#10B981';
+        setTimeout(() => {
+            btn.textContent = orig;
+            btn.style.background = '';
+            btn.style.borderColor = '';
+            btn.style.color = '';
+        }, 2000);
+    }).catch(() => alert('Copy failed — please select the text manually.'));
+}
+
 // Data Cleaning Studio Logic
 document.getElementById('btnOpenCleaner').addEventListener('click', () => {
     const cleanCard = document.getElementById('cleanCard');
