@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SchemaScribe AI | Intelligent Data Dictionary 📊</title>
     <!-- Modern Premium Typography -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
     <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
@@ -274,10 +274,6 @@
     </style>
 </head>
 <body>
-    <!-- Abstract Ambient Glow Backgrounds -->
-    <div class="ambient-glow bg-purple"></div>
-    <div class="ambient-glow bg-cyan"></div>
-
     <div class="container">
         <!-- Premium Navigation Header -->
         <header class="glass-card header-bar animate-fade-in">
@@ -288,6 +284,76 @@
             </div>
             <div class="header-tag">Senior Data Analyst v1.0.2</div>
         </header>
+
+        <!-- Premium Landing Hero Section -->
+        <section id="heroSection" class="animate-fade-in">
+            <div class="hero-container">
+                <div class="hero-layout">
+                    <div class="hero-left">
+                        <span class="hero-eyebrow">Enterprise Data Catalog</span>
+                        <h1 class="hero-title">Discover, trust, and activate your data.</h1>
+                        <p class="hero-subtitle">The modern data intelligence platform. Automatically profile schemas, detect anomalies, and generate AI-driven context for your entire data stack.</p>
+                        
+                        <div class="hero-actions">
+                            <button class="hero-btn-primary" onclick="document.getElementById('uploadCard').scrollIntoView({behavior: 'smooth'})">
+                                Get Started <i class="fa-solid fa-arrow-right"></i>
+                            </button>
+                            <button class="hero-btn-secondary">
+                                <i class="fa-solid fa-play"></i> Watch Demo
+                            </button>
+                        </div>
+                        
+                        <div class="trust-bar">
+                            Trusted by data teams at <span class="trust-brands">Acme Corp · GlobalTech · DataFlow</span>
+                        </div>
+                    </div>
+                    
+                    <div class="hero-right">
+                        <div class="hero-preview-card">
+                            <div class="preview-gauge">
+                                <div class="preview-gauge-circle">94%</div>
+                                <div>
+                                    <div style="font-family: var(--font-header); font-weight: 700; margin-bottom: 2px;">Data Health Index</div>
+                                    <div style="font-size: 12px; color: var(--text-secondary);">Optimal structural consistency</div>
+                                </div>
+                            </div>
+                            
+                            <div class="preview-col">
+                                <span style="font-size: 13px; font-weight: 600;">customer_id</span>
+                                <span class="preview-badge">Primary Key</span>
+                            </div>
+                            <div class="preview-col">
+                                <span style="font-size: 13px; font-weight: 600;">transaction_amount</span>
+                                <span class="preview-badge" style="background: rgba(245,158,11,0.1); color: #78350f;">Numeric</span>
+                            </div>
+                            
+                            <div class="preview-chat">
+                                <div class="preview-chat-msg">What anomalies exist?</div>
+                                <div class="preview-chat-reply">I found 14 null values in 'revenue' and 2 duplicate rows...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="feature-strip">
+                    <div class="feature-card">
+                        <i class="fa-solid fa-bolt" style="color: var(--warning); font-size: 24px; margin-bottom: 16px;"></i>
+                        <h3>Instant Profiling</h3>
+                        <p>Upload any CSV or JSON and get an automatic schema breakdown in seconds.</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fa-solid fa-robot" style="color: var(--primary); font-size: 24px; margin-bottom: 16px;"></i>
+                        <h3>AI-Driven Context</h3>
+                        <p>Our LLM automatically documents every column with business descriptions.</p>
+                    </div>
+                    <div class="feature-card">
+                        <i class="fa-solid fa-database" style="color: var(--success); font-size: 24px; margin-bottom: 16px;"></i>
+                        <h3>1-Click DDL Export</h3>
+                        <p>Generate precise table creation scripts for Snowflake, Postgres, and more.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
 
         <!-- Interactive Drag and Drop Upload Card -->
         <section class="glass-card upload-section animate-slide-up" id="uploadCard">
@@ -329,14 +395,8 @@
                 <div class="glass-card summary-card health-card">
                     <div class="health-gauge-container">
                         <svg class="progress-ring" width="120" height="120">
-                            <circle class="progress-ring-circle-bg" stroke="rgba(255,255,255,0.06)" stroke-width="8" fill="transparent" r="50" cx="60" cy="60"/>
-                            <circle class="progress-ring-circle" id="healthCircle" stroke="url(#cyanPurpleGradient)" stroke-width="8" fill="transparent" r="50" cx="60" cy="60"/>
-                            <defs>
-                                <linearGradient id="cyanPurpleGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                                    <stop offset="0%" stop-color="#06B6D4" />
-                                    <stop offset="100%" stop-color="#8B5CF6" />
-                                </linearGradient>
-                            </defs>
+                            <circle class="progress-ring-circle-bg" stroke="var(--border)" stroke-width="8" fill="transparent" r="50" cx="60" cy="60"/>
+                            <circle class="progress-ring-circle" id="healthCircle" stroke="var(--success)" stroke-width="8" fill="transparent" r="50" cx="60" cy="60"/>
                         </svg>
                         <div class="health-score-value" id="healthScore">94%</div>
                     </div>
