@@ -34,6 +34,11 @@ def infer_semantic_type(col_name, series):
     unique_count = non_null_series.nunique()
     unique_ratio = unique_count / non_null_len if non_null_len > 0 else 0
     
+    if any(hint in col_name.lower() for hint in ["aadhaar","aadhar","uid_no"]):
+        return "Aadhaar ID"
+    if any(hint in col_name.lower() for hint in ["blood_pressure","bp","systolic"]):
+        return "Blood Pressure"
+
     # 1. Primary Key Detection
     if unique_count == total_len and total_len > 1:
         if any(substring in col_lower for substring in ["id", "key", "uuid", "code", "pk"]):
@@ -103,6 +108,71 @@ def infer_semantic_type(col_name, series):
 
     return "Text / String"
 
+def calculate_validity_issues(df):
+    """
+    Checks for validity issues in the dataframe columns:
+    1. Any numeric column with values outside 3x IQR — flag as "range_anomalies"
+    2. Any column named containing "age" — flag values > 120 or < 0 as invalid
+    3. Any column named containing "bill", "amount", "price", "salary" — flag negative values as invalid
+    4. Any column named containing "bmi" — flag values > 60 or < 10 as invalid
+    Returns dict: { col_name: { "invalid_count": N, "invalid_pct": X } }
+    """
+    validity_results = {}
+    total_rows = len(df)
+    if total_rows == 0:
+        return {}
+
+    for col in df.columns:
+        series = df[col]
+        invalid_mask = pd.Series(False, index=df.index)
+
+        # 1. Any numeric column with values outside 3x IQR
+        if pd.api.types.is_numeric_dtype(series):
+            non_null = series.dropna()
+            if len(non_null) > 0:
+                q25 = non_null.quantile(0.25)
+                q75 = non_null.quantile(0.75)
+                iqr = q75 - q25
+                lower_bound = q25 - 3.0 * iqr
+                upper_bound = q75 + 3.0 * iqr
+                invalid_mask |= (series < lower_bound) | (series > upper_bound)
+
+        col_lower = col.lower()
+
+        # 2. Any column named containing "age" — flag values > 120 or < 0 as invalid
+        if "age" in col_lower:
+            try:
+                num_series = pd.to_numeric(series, errors='coerce')
+                invalid_mask |= (num_series > 120) | (num_series < 0)
+            except Exception:
+                pass
+
+        # 3. Any column named containing "bill", "amount", "price", "salary" — flag negative values as invalid
+        if any(hint in col_lower for hint in ["bill", "amount", "price", "salary"]):
+            try:
+                num_series = pd.to_numeric(series, errors='coerce')
+                invalid_mask |= (num_series < 0)
+            except Exception:
+                pass
+
+        # 4. Any column named containing "bmi" — flag values > 60 or < 10 as invalid
+        if "bmi" in col_lower:
+            try:
+                num_series = pd.to_numeric(series, errors='coerce')
+                invalid_mask |= (num_series > 60) | (num_series < 10)
+            except Exception:
+                pass
+
+        invalid_count = int(invalid_mask.sum())
+        invalid_pct = (invalid_count / total_rows) * 100.0 if total_rows > 0 else 0.0
+
+        validity_results[col] = {
+            "invalid_count": invalid_count,
+            "invalid_pct": invalid_pct
+        }
+
+    return validity_results
+
 def profile_dataset(file_path):
     """
     Main expert data analysis engine. Performs deep profiling, calculates quality indices, 
@@ -156,6 +226,14 @@ def profile_dataset(file_path):
     if total_cols > 0:
         health_score -= ((empty_cols / total_cols) * 15.0)
         
+    health_score = max(0.0, min(100.0, health_score))
+    
+    # Deduct for validity issues
+    validity_issues = calculate_validity_issues(df)
+    for col_name, issues in validity_issues.items():
+        if issues["invalid_pct"] > 5.0:
+            health_score -= 5.0
+            
     health_score = max(0.0, min(100.0, health_score))
     
     # Columns profiling
