@@ -1,6 +1,8 @@
 // app.js - Frontend Logic for Intelligent Data Dictionary & Analytics Agent
 
-const BACKEND_URL = "http://127.0.0.1:8000";
+const BACKEND_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? "http://127.0.0.1:8000"
+  : "https://schemascribe-ai.onrender.com";
 const API_KEY = "schemaScribe-dev-key-2026";
 
 // DOM Elements

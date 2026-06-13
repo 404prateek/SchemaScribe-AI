@@ -1,10 +1,11 @@
 fastapi
-uvicorn
+uvicorn[standard]
 pandas
-python-multipart
+numpy
+openpyxl
 requests
 httpx
 redis
-python-dotenv
+python-multipart
 pydantic
-openpyxl
+python-dotenv

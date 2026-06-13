@@ -13,8 +13,18 @@ ENV/
 env.bak/
 venv.bak/
 
-# Uploads
-app/temp_uploads/
+# Uploads — keep the folder but not the files
+app/temp_uploads/*
+!app/temp_uploads/.gitkeep
+
+# Data files
+*.xlsx
+*.csv
+*.xls
+*.json.bak
+
+# Build
+dist/
 
 # OS generated files
 .DS_Store
