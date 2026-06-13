@@ -270,7 +270,16 @@ def profile_dataset(file_path):
     # Step 2a — Structural penalties
     missing_ratio = total_missing_cells / total_possible_cells
     health_score -= (missing_ratio * 25.0)          # nulls          (max –25)
-    health_score -= (dup_percentage * 0.20)          # duplicates     (max –20)
+    if dup_percentage >= 50:
+        health_score -= 35    # more than half rows are dupes = severe
+    elif dup_percentage >= 30:
+        health_score -= 22
+    elif dup_percentage >= 15:
+        health_score -= 12
+    elif dup_percentage >= 5:
+        health_score -= 6
+    else:
+        health_score -= dup_percentage * 0.10
     empty_cols = sum(df.isna().all())
     if total_cols > 0:
         health_score -= ((empty_cols / total_cols) * 10.0)  # empty cols (max –10)
