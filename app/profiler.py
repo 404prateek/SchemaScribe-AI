@@ -108,70 +108,122 @@ def infer_semantic_type(col_name, series):
 
     return "Text / String"
 
-def calculate_validity_issues(df):
+def _col_anomaly_penalty(series, col_lower):
     """
-    Checks for validity issues in the dataframe columns:
-    1. Any numeric column with values outside 3x IQR — flag as "range_anomalies"
-    2. Any column named containing "age" — flag values > 120 or < 0 as invalid
-    3. Any column named containing "bill", "amount", "price", "salary" — flag negative values as invalid
-    4. Any column named containing "bmi" — flag values > 60 or < 10 as invalid
-    Returns dict: { col_name: { "invalid_count": N, "invalid_pct": X } }
+    Compute per-column anomaly penalty (0–20) for a single Series.
+    Used by both detect_value_anomalies() and the per-column validity flag.
     """
-    validity_results = {}
-    total_rows = len(df)
-    if total_rows == 0:
-        return {}
+    col_penalty = 0.0
+    n = len(series)
+    if n == 0:
+        return col_penalty
 
-    for col in df.columns:
-        series = df[col]
-        invalid_mask = pd.Series(False, index=df.index)
+    if pd.api.types.is_numeric_dtype(series):
+        # Age column: valid range 0–120
+        if any(k in col_lower for k in ['age']):
+            invalid = ((series < 0) | (series > 120)).sum()
+            col_penalty += (invalid / n) * 15
 
-        # 1. Any numeric column with values outside 3x IQR
-        if pd.api.types.is_numeric_dtype(series):
-            non_null = series.dropna()
-            if len(non_null) > 0:
-                q25 = non_null.quantile(0.25)
-                q75 = non_null.quantile(0.75)
-                iqr = q75 - q25
-                lower_bound = q25 - 3.0 * iqr
-                upper_bound = q75 + 3.0 * iqr
-                invalid_mask |= (series < lower_bound) | (series > upper_bound)
+        # BMI: valid range 10–60
+        elif any(k in col_lower for k in ['bmi']):
+            invalid = ((series < 10) | (series > 60)).sum()
+            col_penalty += (invalid / n) * 10
 
-        col_lower = col.lower()
+        # Financial columns: must be >= 0
+        elif any(k in col_lower for k in
+                 ['price', 'amount', 'bill', 'salary', 'cost',
+                  'revenue', 'fee', 'charge', 'payment']):
+            invalid = (series < 0).sum()
+            col_penalty += (invalid / n) * 12
 
-        # 2. Any column named containing "age" — flag values > 120 or < 0 as invalid
-        if "age" in col_lower:
-            try:
-                num_series = pd.to_numeric(series, errors='coerce')
-                invalid_mask |= (num_series > 120) | (num_series < 0)
-            except Exception:
-                pass
+        # Percentage / discount / rating: 0–100
+        elif any(k in col_lower for k in
+                 ['pct', 'percent', 'discount', 'rating', 'score']):
+            invalid = ((series < 0) | (series > 100)).sum()
+            col_penalty += (invalid / n) * 8
 
-        # 3. Any column named containing "bill", "amount", "price", "salary" — flag negative values as invalid
-        if any(hint in col_lower for hint in ["bill", "amount", "price", "salary"]):
-            try:
-                num_series = pd.to_numeric(series, errors='coerce')
-                invalid_mask |= (num_series < 0)
-            except Exception:
-                pass
+        # Quantity / stock / count: must be >= 0
+        elif any(k in col_lower for k in
+                 ['qty', 'quantity', 'stock', 'count', 'units']):
+            invalid = (series < 0).sum()
+            col_penalty += (invalid / n) * 8
 
-        # 4. Any column named containing "bmi" — flag values > 60 or < 10 as invalid
-        if "bmi" in col_lower:
-            try:
-                num_series = pd.to_numeric(series, errors='coerce')
-                invalid_mask |= (num_series > 60) | (num_series < 10)
-            except Exception:
-                pass
+        # General 5×IQR extreme outlier check for ALL numeric cols
+        Q1 = series.quantile(0.25)
+        Q3 = series.quantile(0.75)
+        IQR = Q3 - Q1
+        if IQR > 0:
+            extreme_low  = series < (Q1 - 5 * IQR)
+            extreme_high = series > (Q3 + 5 * IQR)
+            extreme_count = (extreme_low | extreme_high).sum()
+            col_penalty += (extreme_count / n) * 10
 
-        invalid_count = int(invalid_mask.sum())
-        invalid_pct = (invalid_count / total_rows) * 100.0 if total_rows > 0 else 0.0
-
-        validity_results[col] = {
-            "invalid_count": invalid_count,
-            "invalid_pct": invalid_pct
+    elif series.dtype == object:
+        GARBAGE_VALUES = {
+            '???', 'n/a', 'na', 'none', 'null', 'undefined',
+            'unknown', 'tbd', 'test', 'xxx', '---', 'invalid',
+            'notanemail', 'pending', 'missing', '#n/a', '#null!',
+            '#value!', '#ref!', '#error', 'nan', 'inf', '-inf',
+            '0/0', '999/999', 'abc/def', 'tomorrow', 'yesterday'
         }
+        str_series = series.astype(str).str.strip().str.lower()
+        garbage_count = str_series.isin(GARBAGE_VALUES).sum()
+        col_penalty += (garbage_count / n) * 12
 
-    return validity_results
+        empty_str = (str_series == '').sum()
+        col_penalty += (empty_str / n) * 8
+
+        # Email format validation
+        if any(k in col_lower for k in ['email', 'mail']):
+            valid_email = series.astype(str).str.match(
+                r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$'
+            )
+            invalid_email = (~valid_email).sum()
+            col_penalty += (invalid_email / n) * 10
+
+        # Phone: 7–15 digits
+        if any(k in col_lower for k in ['phone', 'mobile', 'tel', 'contact']):
+            digit_only = series.astype(str).str.replace(
+                r'[\s\-\+\(\)]', '', regex=True)
+            invalid_phone = (~digit_only.str.match(r'^\d{7,15}$')).sum()
+            col_penalty += (invalid_phone / n) * 8
+
+        # Date column — try parsing, count failures and suspicious dates
+        if any(k in col_lower for k in
+               ['date', 'dob', 'dt', 'time', 'admission', 'joining']):
+            parsed = pd.to_datetime(series, errors='coerce')
+            unparseable = parsed.isna().sum()
+            col_penalty += (unparseable / n) * 10
+            future = (parsed > pd.Timestamp('2030-01-01')).sum()
+            col_penalty += (future / n) * 8
+            past = (parsed < pd.Timestamp('1900-01-01')).sum()
+            col_penalty += (past / n) * 8
+
+        # Pincode: must be exactly 6 digits (India)
+        if any(k in col_lower for k in ['pin', 'pincode', 'postal', 'zip']):
+            invalid_pin = (~series.astype(str).str.match(r'^\d{6}$')).sum()
+            col_penalty += (invalid_pin / n) * 6
+
+    return col_penalty
+
+
+def detect_value_anomalies(df, columns_profile):
+    """
+    Runs semantic value checks across all columns and returns a normalised
+    anomaly_penalty in [0, 50] to subtract from health_score.
+    """
+    total_penalty = 0.0
+    for col in df.columns:
+        series = df[col].dropna()
+        col_lower = col.lower()
+        col_penalty = _col_anomaly_penalty(series, col_lower)
+        # Cap per-column contribution at 20 so one bad column can't dominate
+        total_penalty += min(col_penalty, 20.0)
+
+    num_cols = max(len(df.columns), 1)
+    # Normalise: max raw = num_cols * 20; map onto [0, 50]
+    normalized = (total_penalty / (num_cols * 20)) * 50
+    return round(min(normalized, 50.0), 2)
 
 def profile_dataset(file_path):
     """
@@ -212,28 +264,17 @@ def profile_dataset(file_path):
     total_missing_cells = int(df.isna().sum().sum())
     completeness = ((total_possible_cells - total_missing_cells) / total_possible_cells) * 100
     
-    # Calculate Data Health Score (Deduction system)
+    # ── Data Health Score (deduction system) ────────────────────────────────
     health_score = 100.0
-    # 1. Deduct for missing values (Up to 30 points)
+
+    # Step 2a — Structural penalties
     missing_ratio = total_missing_cells / total_possible_cells
-    health_score -= (missing_ratio * 30.0)
-    
-    # 2. Deduct for duplicates (Up to 15 points)
-    health_score -= (dup_percentage * 0.15)
-    
-    # 3. Deduct for completely empty columns (Up to 15 points)
+    health_score -= (missing_ratio * 25.0)          # nulls          (max –25)
+    health_score -= (dup_percentage * 0.20)          # duplicates     (max –20)
     empty_cols = sum(df.isna().all())
     if total_cols > 0:
-        health_score -= ((empty_cols / total_cols) * 15.0)
-        
-    health_score = max(0.0, min(100.0, health_score))
-    
-    # Deduct for validity issues
-    validity_issues = calculate_validity_issues(df)
-    for col_name, issues in validity_issues.items():
-        if issues["invalid_pct"] > 5.0:
-            health_score -= 5.0
-            
+        health_score -= ((empty_cols / total_cols) * 10.0)  # empty cols (max –10)
+
     health_score = max(0.0, min(100.0, health_score))
     
     # Columns profiling
@@ -295,6 +336,11 @@ def profile_dataset(file_path):
         else:
             sample_str = "N/A (All Missing)"
             
+        # Per-column validity flag ──────────────────────────────────────────
+        col_vp = _col_anomaly_penalty(series.dropna(), col.lower())
+        has_validity_issues = col_vp > 5
+        validity_issue_pct  = round(col_vp, 1) if has_validity_issues else 0
+
         columns_profile.append({
             "name": col,
             "pandas_dtype": str(df[col].dtype),
@@ -310,7 +356,9 @@ def profile_dataset(file_path):
             "max": clean_value(max_val) if max_val is not None else None,
             "outliers_count": outlier_count,
             "top_outliers": outliers_data if pd.api.types.is_numeric_dtype(series) else [],
-            "sample_data": sample_str
+            "sample_data": sample_str,
+            "has_validity_issues": has_validity_issues,
+            "validity_issue_pct": validity_issue_pct
         })
         
     # 3. Dynamic Chart Aggregates for visual analytics
@@ -381,12 +429,33 @@ def profile_dataset(file_path):
             except:
                 pass
         
+    # Step 4 — Semantic / value anomaly penalty (max –50) ──────────────────
+    anomaly_penalty = detect_value_anomalies(df, columns_profile)
+    health_score -= anomaly_penalty
+    health_score = max(0.0, min(100.0, health_score))
+    health_score = round(health_score, 2)
+
+    # Step 5 — Quality label ────────────────────────────────────────────────
+    if health_score >= 85:
+        quality_label = "Excellent data quality — dataset is production-ready."
+    elif health_score >= 70:
+        quality_label = "Good data quality with minor issues."
+    elif health_score >= 50:
+        quality_label = "Moderate data quality — cleaning recommended."
+    elif health_score >= 30:
+        quality_label = "Poor data quality — significant issues detected."
+    else:
+        quality_label = "Critical data quality — dataset requires major cleaning."
+
     return {
         "total_rows": total_rows,
         "total_cols": total_cols,
         "duplicate_rows": duplicate_rows,
         "completeness": round(completeness, 2),
-        "health_score": round(health_score, 2),
+        "health_score": health_score,
+        "quality_label": quality_label,
+        "anomaly_penalty": anomaly_penalty,
+        "validity_issues_detected": anomaly_penalty > 5,
         "columns": columns_profile,
         "charts": chart_data
     }
