@@ -337,8 +337,8 @@ def profile_dataset(file_path):
             sample_str = "N/A (All Missing)"
             
         # Per-column validity flag ──────────────────────────────────────────
-        col_vp = _col_anomaly_penalty(series.dropna(), col.lower())
-        has_validity_issues = col_vp > 5
+        col_vp = float(_col_anomaly_penalty(series.dropna(), col.lower()))
+        has_validity_issues = bool(col_vp > 5)
         validity_issue_pct  = round(col_vp, 1) if has_validity_issues else 0
 
         columns_profile.append({
@@ -455,7 +455,7 @@ def profile_dataset(file_path):
         "health_score": health_score,
         "quality_label": quality_label,
         "anomaly_penalty": anomaly_penalty,
-        "validity_issues_detected": anomaly_penalty > 5,
+        "validity_issues_detected": bool(anomaly_penalty > 5),
         "columns": columns_profile,
         "charts": chart_data
     }
