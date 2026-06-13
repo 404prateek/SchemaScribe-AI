@@ -36,6 +36,43 @@ function formatInsight(val) {
     return String(val);
 }
 
+/**
+ * Lightweight markdown → HTML converter for chat bubbles.
+ * Handles: **bold**, *italic*, `inline code`, numbered lists, bullet lists,
+ * and line breaks. Intentionally minimal — no external library needed.
+ */
+function renderMarkdown(text) {
+    if (!text) return '';
+    // Escape raw HTML to prevent XSS
+    let html = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    // Bold: **text** or __text__
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
+
+    // Italic: *text* or _text_ (but not inside already-replaced bold)
+    html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
+    html = html.replace(/(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g, '<em>$1</em>');
+
+    // Inline code: `code`
+    html = html.replace(/`([^`]+)`/g, '<code style="background:rgba(6,182,212,0.15);color:#06B6D4;padding:1px 5px;border-radius:4px;font-family:monospace;font-size:0.9em">$1</code>');
+
+    // Numbered list items: lines starting with "1. ", "2. ", etc.
+    html = html.replace(/^(\d+)\. (.+)$/gm, '<div style="margin:2px 0;padding-left:4px"><span style="color:var(--cyan-electric);font-weight:600;margin-right:6px">$1.</span>$2</div>');
+
+    // Bullet list items: lines starting with "- " or "• "
+    html = html.replace(/^[\-•] (.+)$/gm, '<div style="margin:2px 0;padding-left:4px"><span style="color:var(--cyan-electric);margin-right:6px">•</span>$1</div>');
+
+    // Line breaks: double newline → paragraph break, single → <br>
+    html = html.replace(/\n\n/g, '<br><br>');
+    html = html.replace(/\n/g, '<br>');
+
+    return html;
+}
+
 // Initialize Drag & Drop Events
 fileInput.addEventListener('change', (e) => {
     if (fileInput.files.length > 0) {
@@ -121,11 +158,19 @@ async function handleUpload(files) {
         progressFill.style.width = "100%";
         
         setTimeout(() => {
-            renderDashboard(data.file_id, data.profile, data.is_multi, data.erd_mapping);
+            try {
+                renderDashboard(data.file_id, data.profile, data.is_multi, data.erd_mapping);
+            } catch (renderErr) {
+                console.error("Dashboard render error:", renderErr);
+                loadingState.style.display = 'none';
+                uploadCard.style.display = 'block';
+                alert(`Dashboard render failed: ${renderErr.message}\n\nCheck browser console (F12) for details.`);
+            }
         }, 500);
 
     } catch (err) {
         clearInterval(interval);
+        console.error("Analysis error:", err);
         alert(`Analysis Failed: ${err.message}`);
         loadingState.style.display = 'none';
         uploadCard.style.display = 'block';
@@ -768,8 +813,9 @@ async function sendChatMessage() {
         const typingEl = document.getElementById(typingId);
         if (typingEl) typingEl.remove();
         
-        // Build AI response
-        let finalHtml = `<div>${data.reply || data.error}</div>`;
+        // Build AI response — convert markdown to rich HTML
+        const replyText = data.reply || data.error || 'No response.';
+        let finalHtml = `<div style="line-height:1.65;">${renderMarkdown(replyText)}</div>`;
         
         if (data.code) {
             finalHtml += `<div class="code-block">${data.code}</div>`;
@@ -817,18 +863,84 @@ function appendChatMsg(role, htmlContent, id = null) {
 
 // ── Voice Input (Sarvam AI Speech-to-Text) ───────────────────────────────────
 
-function _showVoiceToast(msg) {
+function _showVoiceToast(msg, isError = true) {
     const toast = document.getElementById('voiceToast');
     const span  = document.getElementById('voiceToastMsg');
     if (!toast) return;
     span.textContent = msg;
+    toast.style.borderColor = isError ? 'rgba(239,68,68,0.5)' : 'rgba(6,182,212,0.5)';
+    toast.style.color = isError ? '#FDA4AF' : '#67E8F9';
     toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 3000);
+    setTimeout(() => toast.classList.remove('show'), 4000);
+}
+
+/**
+ * Converts any audio blob (webm, ogg, etc.) to a standard 16-bit mono WAV blob
+ * using the Web Audio API. Sarvam's STT API only accepts wav/mp3 — webm is rejected.
+ */
+async function convertBlobToWav(audioBlob) {
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    let audioBuffer;
+    try {
+        audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    } finally {
+        audioCtx.close();
+    }
+
+    // Downmix to mono by averaging all channels
+    const numChannels = audioBuffer.numberOfChannels;
+    const length = audioBuffer.length;
+    const sampleRate = audioBuffer.sampleRate;
+    const monoData = new Float32Array(length);
+
+    for (let ch = 0; ch < numChannels; ch++) {
+        const channelData = audioBuffer.getChannelData(ch);
+        for (let i = 0; i < length; i++) {
+            monoData[i] += channelData[i] / numChannels;
+        }
+    }
+
+    // Convert Float32 PCM → Int16 PCM
+    const int16 = new Int16Array(length);
+    for (let i = 0; i < length; i++) {
+        const clamped = Math.max(-1, Math.min(1, monoData[i]));
+        int16[i] = clamped < 0 ? clamped * 32768 : clamped * 32767;
+    }
+
+    // Build WAV file with 44-byte header
+    const dataBytes   = int16.length * 2;
+    const wavBuffer   = new ArrayBuffer(44 + dataBytes);
+    const view        = new DataView(wavBuffer);
+    const writeStr    = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+
+    writeStr(0,  'RIFF');
+    view.setUint32(4,  36 + dataBytes,    true); // file size - 8
+    writeStr(8,  'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16,                true); // PCM chunk size
+    view.setUint16(20, 1,                 true); // PCM = 1
+    view.setUint16(22, 1,                 true); // mono
+    view.setUint32(24, sampleRate,        true);
+    view.setUint32(28, sampleRate * 2,    true); // byte rate (16-bit mono)
+    view.setUint16(32, 2,                 true); // block align
+    view.setUint16(34, 16,                true); // bits per sample
+    writeStr(36, 'data');
+    view.setUint32(40, dataBytes,         true);
+
+    // Copy PCM samples
+    new Uint8Array(wavBuffer, 44).set(new Uint8Array(int16.buffer));
+
+    return new Blob([wavBuffer], { type: 'audio/wav' });
 }
 
 async function sendVoiceToBackend(audioBlob) {
+    // Sarvam STT only accepts wav/mp3 — convert from browser's native webm first
+    const wavBlob = await convertBlobToWav(audioBlob);
+
     const formData = new FormData();
-    formData.append('audio', audioBlob, 'recording.webm');
+    formData.append('audio', wavBlob, 'recording.wav');
     const response = await fetch(`${BACKEND_URL}/api/voice-to-text`, {
         method: 'POST',
         headers: { "X-API-Key": API_KEY },
@@ -847,9 +959,26 @@ function initVoiceInput() {
     if (!btn || btn._voiceInitialised) return;   // guard against double-init
     btn._voiceInitialised = true;
 
-    // Check browser support
+    // Check if we're in a secure context (required for mediaDevices API).
+    // file:// URLs are NOT secure contexts — user must serve via http://localhost.
+    if (!window.isSecureContext) {
+        btn.title = 'Voice input requires the app to be served via http:// (not file://). Open http://127.0.0.1:8000 instead.';
+        btn.style.opacity = '0.4';
+        btn.style.cursor = 'not-allowed';
+        btn.addEventListener('click', () => {
+            _showVoiceToast('⚠ Open via http://127.0.0.1:8000 — voice requires a secure context (not file://)');
+        });
+        return;
+    }
+
+    // Check browser MediaRecorder support
     if (!navigator.mediaDevices || !window.MediaRecorder) {
-        btn.style.display = 'none';
+        btn.title = 'Your browser does not support audio recording.';
+        btn.style.opacity = '0.4';
+        btn.style.cursor = 'not-allowed';
+        btn.addEventListener('click', () => {
+            _showVoiceToast('⚠ Audio recording not supported in this browser. Try Chrome or Edge.');
+        });
         return;
     }
 
@@ -881,6 +1010,7 @@ function initVoiceInput() {
                     btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
                     btn.disabled = true;
                     btn.title = 'Transcribing...';
+                    _showVoiceToast('🎙 Transcribing your speech...', false);
 
                     const blob = new Blob(audioChunks, { type: mimeType });
 
@@ -888,13 +1018,15 @@ function initVoiceInput() {
                         const transcript = await sendVoiceToBackend(blob);
                         if (transcript) {
                             document.getElementById('chatInput').value = transcript;
+                            _showVoiceToast('✓ Transcribed! Sending message...', false);
                             sendChatMessage();
                         } else {
-                            _showVoiceToast('No speech detected, try again');
+                            _showVoiceToast('⚠ No speech detected — please speak clearly and try again');
                         }
                     } catch (err) {
                         console.error('Voice transcription error:', err);
-                        _showVoiceToast('Voice input failed, type instead');
+                        // Show the actual API error so user knows what went wrong
+                        _showVoiceToast(`⚠ Transcription failed: ${err.message}`);
                     } finally {
                         btn.disabled = false;
                         btn.title = 'Voice input';
@@ -906,9 +1038,14 @@ function initVoiceInput() {
                 btn.classList.add('recording');
                 btn.innerHTML = '<i class="fa-solid fa-stop"></i>';
                 btn.title = 'Stop recording';
+                _showVoiceToast('🔴 Recording... click the button again to stop', false);
             } catch (err) {
                 console.error('Microphone access error:', err);
-                _showVoiceToast('Microphone access denied');
+                if (err.name === 'NotAllowedError') {
+                    _showVoiceToast('⚠ Microphone access denied — allow mic permission in browser settings');
+                } else {
+                    _showVoiceToast(`⚠ Microphone error: ${err.message}`);
+                }
             }
         } else {
             // ── STOP recording ───────────────────────────────────────────────
@@ -919,3 +1056,7 @@ function initVoiceInput() {
         }
     });
 }
+
+// Initialise voice immediately on page load so the button is always ready.
+// It will also be called again from renderDashboard (the guard prevents double-init).
+initVoiceInput();

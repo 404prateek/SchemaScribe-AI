@@ -45,10 +45,13 @@ async def _fetch_insight_limited(col_profile, dataset_context):
 _MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
 
 # Enable CORS for frontend integration
+# NOTE: allow_credentials=True is INCOMPATIBLE with allow_origins=["*"].
+# Browsers will silently drop the response, causing "Failed to fetch" errors.
+# Keep allow_credentials=False when using wildcard origins.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -161,17 +164,22 @@ async def analyze_file(files: List[UploadFile] = File(...), dataset_context: Opt
             with open(temp_file_path, "wb") as buffer:
                 buffer.write(file_bytes)
                 
-            # 1. Run pandas profiling
-            profile_results = profile_dataset(temp_file_path)
+            # 1. Run pandas profiling in the default thread pool so it doesn't block the async event loop.
+            # Use asyncio.get_running_loop() — correct for Python 3.10+ inside an async context.
+            loop = asyncio.get_running_loop()
+            profile_results = await loop.run_in_executor(None, profile_dataset, temp_file_path)
             profile_results["filename"] = file.filename
             
             # 2. Enrich columns with Groq Llama-3 AI business descriptions in parallel
             if not is_multi:
-                # Pre-fill empty columns instantly (no API call needed)
+                # Pre-fill ALL columns with fallback text first (ensures fields always exist)
                 for col_profile in profile_results["columns"]:
                     if col_profile.get("null_percentage", 0) == 100.0 or col_profile.get("semantic_type") == "Empty / Missing":
                         col_profile["description"] = "This column contains no valid data (100% missing). Populate it before analysis."
                         col_profile["recommendation"] = "Drop this column or investigate the data pipeline — all values are null."
+                    else:
+                        col_profile["description"] = "AI description pending..."
+                        col_profile["recommendation"] = "AI recommendation pending..."
 
                 # Collect only columns that need an AI call
                 cols_needing_ai = [
@@ -235,6 +243,7 @@ async def analyze_file(files: List[UploadFile] = File(...), dataset_context: Opt
                 "total_rows": sum(p["profile"]["total_rows"] for p in profiles),
                 "total_cols": sum(p["profile"]["total_cols"] for p in profiles),
                 "duplicate_rows": sum(p["profile"]["duplicate_rows"] for p in profiles),
+                "completeness": round(sum(p["profile"].get("completeness", 0) for p in profiles) / len(profiles), 2),
                 "health_score": round(sum(p["profile"]["health_score"] for p in profiles) / len(profiles), 2),
                 "columns": [],
                 "charts": {},
@@ -449,9 +458,7 @@ async def reset_dataset(file_id: str):
         
     return {"status": "success", "message": "Cache and files cleared."}
 
-# Create an empty __init__.py inside app directory to make it a module
-with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "__init__.py"), "w") as f:
-    pass
+# Note: __init__.py is committed to the repo; no need to recreate it at runtime.
 
 class InvestigateRequest(BaseModel):
     file_id: str
@@ -553,4 +560,10 @@ async def chat_with_dataset(request: ChatRequest):
         
     response = ask_dataset_chat(file_path, columns_profile, request.message)
     return response
+
+
+# ── Serve Frontend (must be mounted AFTER all API routes) ────────────────────
+_FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend")
+if os.path.isdir(_FRONTEND_DIR):
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
 

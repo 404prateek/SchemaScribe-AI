@@ -94,10 +94,23 @@ def execute_pandas_code(df, code_str):
             
             # If result is a DataFrame, convert it to a dict for table rendering
             table_data = None
+
+            def _safe_cell(v):
+                """Convert any numpy scalar to a native Python type for JSON serialization."""
+                if hasattr(v, 'item'):   # numpy scalar (int64, float64, bool_, str_, …)
+                    return v.item()
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    return ''
+                return v
+
             if isinstance(res, pd.DataFrame):
                 table_data = {
-                    "columns": list(res.columns),
-                    "rows": res.fillna("").head(20).values.tolist() # limit to top 20 for chat
+                    "columns": [str(c) for c in res.columns],
+                    # itertuples avoids the object-array issue; _safe_cell handles stray numpy scalars
+                    "rows": [
+                        [_safe_cell(cell) for cell in row]
+                        for row in res.fillna("").head(20).itertuples(index=False, name=None)
+                    ]
                 }
                 final_answer = "Returned a table."
             elif isinstance(res, pd.Series):

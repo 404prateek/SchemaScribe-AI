@@ -127,9 +127,11 @@ def profile_dataset(file_path):
             "total_rows": 0,
             "total_cols": total_cols,
             "duplicate_rows": 0,
-            "completeness": 0,
-            "health_score": 0,
-            "columns": []
+            "completeness": 0.0,
+            "health_score": 0.0,
+            "columns": [],
+            "charts": {},
+            "sql_ddl": {}
         }
 
     # Data Quality calculations
