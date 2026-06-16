@@ -244,6 +244,8 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
+        ) : (
+          <div className="space-y-8 pb-12 max-w-[1400px] mx-auto animate-fade-in">
             {/* ── OVERVIEW ─────────────────────────────────────────────── */}
             <div id="overview" className="space-y-6">
             <h2 className="text-xl font-bold text-foreground">Dataset Overview</h2>
@@ -598,6 +600,7 @@ function ERDViewer({ columns, filename, erdMapping }: ERDViewerProps) {
             Copy Mermaid Code
           </button>
         </details>
+      </div>
     </div>
   );
 }
