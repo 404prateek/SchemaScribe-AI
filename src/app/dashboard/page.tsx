@@ -244,6 +244,11 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="space-y-8 pb-12 max-w-[1400px] mx-auto animate-fade-in">
+            {/* ── ERD ────────────────────────────────────────────────────── */}
+            <div id="erd">
+              <ERDViewer columns={columns} filename={String(prof?.filename ?? "dataset")} erdMapping={erdMapping} />
+            </div>
+
             {/* ── OVERVIEW ─────────────────────────────────────────────── */}
             <div id="overview" className="space-y-6">
             <h2 className="text-xl font-bold text-foreground">Dataset Overview</h2>
@@ -333,10 +338,6 @@ export default function DashboardPage() {
               />
             </div>
 
-            {/* ── ERD ────────────────────────────────────────────────────── */}
-            <div id="erd">
-              <ERDViewer columns={columns} filename={String(prof?.filename ?? "dataset")} erdMapping={erdMapping} />
-            </div>
 
             {/* ── CHAT ───────────────────────────────────────────────────── */}
             <div id="chat">
@@ -620,7 +621,9 @@ ${otherCols.slice(0, 5).map((c) => `    string ${cleanAttr(c)}`).join("\n")}
 // ── Chat Panel ────────────────────────────────────────────────────────────────
 
 function ChatPanel({ sessionId }: { sessionId: string }) {
-  const [messages, setMessages] = useState<{ role: "user" | "ai"; content: string }[]>([]);
+  const [messages, setMessages] = useState<{ role: "user" | "ai"; content: string }[]>([
+    { role: "ai", content: "Hello! I am SchemaScribe's AI Assistant. Ask me any question about your data, and I'll write and execute Pandas code to find the answer." }
+  ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -779,55 +782,102 @@ function ChatPanel({ sessionId }: { sessionId: string }) {
   };
 
   return (
-    <div className="flex flex-col h-[70vh] animate-fade-in">
-      <h2 className="text-xl font-bold text-foreground mb-4">Chat with Your Data</h2>
-      <div className="flex-1 overflow-y-auto space-y-4 mb-4">
-        {messages.length === 0 && (
-          <div className="text-center py-16">
-            <p className="text-muted-foreground text-sm">Ask anything about your dataset. Try:<br/>
-              <span className="text-muted-foreground">"What is the average value of [column]?"</span>
-            </p>
-          </div>
-        )}
+    <div className="flex flex-col h-[70vh] animate-fade-in glass-card overflow-hidden" style={{ border: "1px solid hsl(var(--foreground) / 0.1)" }}>
+      {/* Header */}
+      <div className="flex items-center gap-2 px-6 py-4 border-b border-white/[0.05]" style={{ background: "hsl(var(--foreground) / 0.02)" }}>
+        <div className="w-8 h-8 rounded-full flex items-center justify-center bg-green-500/10 text-green-500 border border-green-500/20">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="11" width="18" height="10" rx="2" />
+            <circle cx="12" cy="5" r="2" />
+            <path d="M12 7v4" />
+            <line x1="8" y1="16" x2="8" y2="16" strokeWidth="3" strokeLinecap="round" />
+            <line x1="16" y1="16" x2="16" y2="16" strokeWidth="3" strokeLinecap="round" />
+          </svg>
+        </div>
+        <h2 className="text-lg font-bold text-foreground">Chat with your Dataset</h2>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-black/20">
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[80%] px-4 py-3 rounded-xl text-sm ${m.role === "user" ? "text-foreground" : "text-foreground/90"}`}
+            {m.role === "ai" && (
+              <div className="w-8 h-8 rounded-full flex items-center justify-center bg-green-500/10 text-green-500 border border-green-500/20 mr-3 flex-shrink-0 mt-1">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="3" y="11" width="18" height="10" rx="2" />
+                  <circle cx="12" cy="5" r="2" />
+                  <path d="M12 7v4" />
+                </svg>
+              </div>
+            )}
+            <div className={`max-w-[80%] px-5 py-3.5 rounded-2xl text-sm leading-relaxed ${m.role === "user" ? "text-foreground rounded-tr-sm" : "text-foreground/90 rounded-tl-sm"}`}
               style={m.role === "user"
-                ? { background: "hsl(142 71% 45%)", color: "hsl(var(--primary-foreground))" }
-                : { background: "hsl(var(--foreground) / 0.05)", border: "1px solid hsl(var(--foreground) / 0.07)" }}>
+                ? { background: "hsl(var(--foreground) / 0.1)", border: "1px solid hsl(var(--foreground) / 0.15)" }
+                : { background: "hsl(var(--foreground) / 0.04)", border: "1px solid hsl(var(--foreground) / 0.08)" }}>
               {m.content}
             </div>
           </div>
         ))}
         {loading && (
           <div className="flex justify-start">
-            <div className="px-4 py-3 rounded-xl text-xs text-muted-foreground"
-              style={{ background: "hsl(var(--foreground) / 0.04)", border: "1px solid hsl(var(--foreground) / 0.06)" }}>
-              AI thinking…
+            <div className="w-8 h-8 rounded-full flex items-center justify-center bg-green-500/10 text-green-500 border border-green-500/20 mr-3 flex-shrink-0">
+               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="3" y="11" width="18" height="10" rx="2" />
+                  <circle cx="12" cy="5" r="2" />
+                  <path d="M12 7v4" />
+                </svg>
+            </div>
+            <div className="px-5 py-3.5 rounded-2xl rounded-tl-sm text-sm text-muted-foreground flex items-center gap-1.5"
+              style={{ background: "hsl(var(--foreground) / 0.04)", border: "1px solid hsl(var(--foreground) / 0.08)" }}>
+              <span className="w-1.5 h-1.5 bg-green-500/50 rounded-full animate-bounce" />
+              <span className="w-1.5 h-1.5 bg-green-500/50 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }} />
+              <span className="w-1.5 h-1.5 bg-green-500/50 rounded-full animate-bounce" style={{ animationDelay: "0.4s" }} />
             </div>
           </div>
         )}
       </div>
-      <div className="flex gap-2">
-        <button onClick={toggleListening} title="Sarvam Voice Input"
-          className={`px-4 py-3 rounded-xl transition-all ${isListening ? "animate-pulse" : ""}`}
-          style={{ background: "hsl(var(--foreground) / 0.05)", border: "1px solid hsl(var(--foreground) / 0.08)", color: isListening ? "hsl(142 71% 55%)" : "hsl(var(--muted-foreground))" }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-            <line x1="12" x2="12" y1="19" y2="22" />
-          </svg>
-        </button>
-        <input value={input} onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send()}
-          placeholder="Ask a question about your data…"
-          className="flex-1 px-4 py-3 rounded-xl text-sm text-foreground/90 outline-none"
-          style={{ background: "hsl(var(--foreground) / 0.05)", border: "1px solid hsl(var(--foreground) / 0.08)" }} />
-        <button onClick={send} disabled={loading}
-          className="px-6 py-3 rounded-xl text-sm font-bold text-primary-foreground"
-          style={{ background: "hsl(142 71% 45%)" }}>
-          Send
-        </button>
+
+      {/* Input Box */}
+      <div className="p-4 border-t border-white/[0.05] bg-black/40">
+        <div className="flex gap-2 items-end max-w-4xl mx-auto">
+          <div className="flex-1 relative">
+            <textarea 
+              value={input} 
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              placeholder="Ask a question...e.g. 'What is the average price?'"
+              className="w-full pl-4 pr-12 py-3.5 rounded-xl text-sm text-foreground/90 outline-none resize-none overflow-hidden block min-h-[50px] max-h-[150px]"
+              style={{ background: "hsl(var(--foreground) / 0.04)", border: "1px solid hsl(var(--foreground) / 0.1)" }} 
+              rows={1}
+            />
+          </div>
+          <button onClick={send} disabled={loading || !input.trim()}
+            className="w-12 h-12 flex items-center justify-center rounded-xl transition-all disabled:opacity-40 hover:bg-green-600/90 flex-shrink-0"
+            style={{ background: "hsl(142 71% 45%)", color: "white" }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+          <button onClick={toggleListening} title="Sarvam Voice Input"
+            className={`w-12 h-12 flex items-center justify-center rounded-xl transition-all flex-shrink-0 ${isListening ? "animate-pulse" : ""}`}
+            style={{ 
+              background: isListening ? "rgba(34,197,94,0.15)" : "hsl(142 71% 45%)", 
+              border: isListening ? "1px solid rgba(34,197,94,0.3)" : "none",
+              color: isListening ? "hsl(142 71% 55%)" : "white" 
+            }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" x2="12" y1="19" y2="22" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   );
