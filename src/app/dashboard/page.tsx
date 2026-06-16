@@ -16,7 +16,10 @@ export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState<TabId>("upload");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Record<string, unknown> | null>(null);
-  const [erdMapping, setErdMapping] = useState<Record<string, unknown> | null>(null);
+  const [erdMapping, setErdMapping] = useState<{
+    nodes: { id: string; label: string; columns: string[] }[];
+    links: { source: string; target: string; label: string }[];
+  } | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
