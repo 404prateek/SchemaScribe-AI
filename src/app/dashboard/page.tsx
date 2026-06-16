@@ -16,7 +16,7 @@ export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState<TabId>("upload");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Record<string, unknown> | null>(null);
-  const [erdMapping, setErdMapping] = useState<any>(null);
+  const [erdMapping, setErdMapping] = useState<Record<string, unknown> | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -85,7 +85,9 @@ export default function DashboardPage() {
     { id: "mcp", label: "MCP", icon: "🔧", requiresSession: true },
   ];
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const prof = profile as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const columns = (prof?.columns ?? []) as any[];
   const healthScore = typeof prof?.health_score === "number" ? prof.health_score : 0;
   const letterGrade =
@@ -369,6 +371,7 @@ export default function DashboardPage() {
 function ColumnDictionary({
   columns, sessionId, datasetContext,
 }: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   columns: any[];
   sessionId: string;
   datasetContext: string;
@@ -609,11 +612,13 @@ function ChatPanel({ sessionId }: { sessionId: string }) {
   const [loading, setLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mediaRecorderRef = useRef<any>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
   const convertBlobToWav = async (audioBlob: Blob): Promise<Blob> => {
     const arrayBuffer = await audioBlob.arrayBuffer();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SpeechAudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;
     const audioCtx = new SpeechAudioContext();
 
@@ -723,6 +728,7 @@ function ChatPanel({ sessionId }: { sessionId: string }) {
             } else {
               alert("No speech detected. Please speak clearly.");
             }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           } catch (err: any) {
             console.error("Sarvam Voice transcription error:", err);
             alert(`Voice transcription failed: ${err.message}`);
@@ -733,6 +739,7 @@ function ChatPanel({ sessionId }: { sessionId: string }) {
 
         recorder.start();
         setIsListening(true);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (err: any) {
         console.error("Microphone access error:", err);
         alert(`Microphone error: ${err.message || err.name}`);
@@ -940,7 +947,7 @@ function ExecutiveReportPanel({ sessionId, datasetContext }: { sessionId: string
       </div>
       {!report && !loading && (
         <div className="text-center py-20 text-muted-foreground">
-          <p className="text-sm">Click "Generate Report" to create an AI-powered executive brief.</p>
+          <p className="text-sm">Click &quot;Generate Report&quot; to create an AI-powered executive brief.</p>
         </div>
       )}
       {report && (
