@@ -242,13 +242,6 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-        ) : (
-          <div className="space-y-8 pb-12 max-w-[1400px] mx-auto animate-fade-in">
-            {/* ── ERD ────────────────────────────────────────────────────── */}
-            <div id="erd">
-              <ERDViewer columns={columns} filename={String(prof?.filename ?? "dataset")} erdMapping={erdMapping} />
-            </div>
-
             {/* ── OVERVIEW ─────────────────────────────────────────────── */}
             <div id="overview" className="space-y-6">
             <h2 className="text-xl font-bold text-foreground">Dataset Overview</h2>
@@ -336,6 +329,11 @@ export default function DashboardPage() {
                 sessionId={sessionId!}
                 datasetContext={datasetContext}
               />
+            </div>
+
+            {/* ── ERD ────────────────────────────────────────────────────── */}
+            <div id="erd">
+              <ERDViewer columns={columns} filename={String(prof?.filename ?? "dataset")} erdMapping={erdMapping} />
             </div>
 
 
@@ -523,22 +521,22 @@ function ERDViewer({ columns, filename, erdMapping }: ERDViewerProps) {
 
   let mermaidCode = "";
   if (erdMapping && erdMapping.nodes && erdMapping.nodes.length > 0) {
-    mermaidCode = "erDiagram\n";
+    mermaidCode = "graph TD\n";
     erdMapping.nodes.forEach((node) => {
       const cleanNodeId = node.id.replace(/[^a-zA-Z0-9_]/g, "_");
-      mermaidCode += `  ${cleanNodeId} {\n`;
+      mermaidCode += `  ${cleanNodeId}[("${cleanNodeId}")]\n`;
+      mermaidCode += `  style ${cleanNodeId} fill:#22c55e,stroke:#fff,stroke-width:2px,color:#fff\n`;
       const cols = node.columns || [];
-      cols.slice(0, 10).forEach((col) => {
-        const cleanCol = cleanAttr(col);
-        mermaidCode += `    string ${cleanCol}\n`;
+      cols.slice(0, 7).forEach((col) => {
+        const cleanCol = cleanAttr(col) + "_" + cleanNodeId;
+        mermaidCode += `  ${cleanNodeId} --- ${cleanCol}[${cleanAttr(col)}]\n`;
       });
-      mermaidCode += `  }\n`;
     });
     erdMapping.links.forEach((link) => {
       const cleanSrc = link.source.replace(/[^a-zA-Z0-9_]/g, "_");
       const cleanTgt = link.target.replace(/[^a-zA-Z0-9_]/g, "_");
       const cleanLabel = link.label.replace(/[^a-zA-Z0-9_\s]/g, "_");
-      mermaidCode += `  ${cleanSrc} ||--o{ ${cleanTgt} : "${cleanLabel}"\n`;
+      mermaidCode += `  ${cleanSrc} -->|"${cleanLabel}"| ${cleanTgt}\n`;
     });
   } else {
     const tableName = filename.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_]/g, "_");
@@ -547,13 +545,23 @@ function ERDViewer({ columns, filename, erdMapping }: ERDViewerProps) {
     const dateCols = columns.filter((c) => String(c.semantic_type) === "DateTime").map((c) => String(c.name));
     const otherCols = columns.filter((c) => !pkCols.includes(String(c.name)) && !numCols.includes(String(c.name)) && !dateCols.includes(String(c.name))).map((c) => String(c.name));
 
-    mermaidCode = `erDiagram
-  ${tableName} {
-${pkCols.map((c) => `    string ${cleanAttr(c)} PK`).join("\n")}
-${numCols.slice(0, 5).map((c) => `    number ${cleanAttr(c)}`).join("\n")}
-${dateCols.slice(0, 3).map((c) => `    datetime ${cleanAttr(c)}`).join("\n")}
-${otherCols.slice(0, 5).map((c) => `    string ${cleanAttr(c)}`).join("\n")}
-  }`;
+    mermaidCode = `graph TD\n  Dataset[("${tableName}")]\n  style Dataset fill:#22c55e,stroke:#fff,stroke-width:2px,color:#fff\n`;
+    pkCols.forEach((c) => {
+      const cleanC = cleanAttr(c);
+      mermaidCode += `  Dataset --- ${cleanC}[${cleanC}]\n  style ${cleanC} fill:#3b82f6,color:#fff,stroke:#fff,stroke-dasharray: 5 5\n`;
+    });
+    numCols.slice(0, 5).forEach((c) => {
+      const cleanC = cleanAttr(c);
+      mermaidCode += `  Dataset --- ${cleanC}[${cleanC}]\n  style ${cleanC} fill:#eab308,color:#000,stroke:#fff\n`;
+    });
+    dateCols.slice(0, 3).forEach((c) => {
+      const cleanC = cleanAttr(c);
+      mermaidCode += `  Dataset --- ${cleanC}[${cleanC}]\n  style ${cleanC} fill:#a855f7,color:#fff,stroke:#fff\n`;
+    });
+    otherCols.slice(0, 5).forEach((c) => {
+      const cleanC = cleanAttr(c);
+      mermaidCode += `  Dataset --- ${cleanC}[${cleanC}]\n  style ${cleanC} fill:#333,color:#fff,stroke:#666\n`;
+    });
   }
 
   const mermaidRef = useRef<HTMLDivElement>(null);
@@ -587,33 +595,6 @@ ${otherCols.slice(0, 5).map((c) => `    string ${cleanAttr(c)}`).join("\n")}
             Copy Mermaid Code
           </button>
         </details>
-      </div>
-      {/* SVG preview of table structure */}
-      <div className="glass-card p-6">
-        <h3 className="text-sm font-semibold text-muted-foreground mb-4">Schema Preview</h3>
-        <div className="overflow-x-auto">
-          <table className="text-xs w-full">
-            <thead>
-              <tr className="border-b border-foreground/10">
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Column</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Type</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Missing %</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Unique</th>
-              </tr>
-            </thead>
-            <tbody>
-              {columns.map((c) => (
-                <tr key={String(c.name)} className="border-b border-white/[0.03] hover:bg-white/[0.02]">
-                  <td className="py-2 px-3 font-mono text-foreground/90">{String(c.name)}</td>
-                  <td className="py-2 px-3 text-muted-foreground">{String(c.semantic_type)}</td>
-                  <td className="py-2 px-3 text-muted-foreground">{String(c.null_percentage)}%</td>
-                  <td className="py-2 px-3 text-muted-foreground">{String(c.unique_count)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   );
 }
